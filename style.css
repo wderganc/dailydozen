@@ -345,18 +345,6 @@ h2 {
   background: var(--cream);
 }
 
-.login-hint {
-  grid-column: 2;
-  align-self: start;
-  max-width: 560px;
-  margin: -12px 0 0;
-  padding: 0 4px;
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.5;
-}
-
 code {
   padding: 2px 5px;
   border: 1px solid rgba(38, 48, 41, 0.22);
@@ -849,11 +837,6 @@ code {
   .hotel-body {
     gap: 18px;
     padding: 28px;
-  }
-
-  .login-hint {
-    grid-column: auto;
-    margin-top: -8px;
   }
 
   .overview-band,

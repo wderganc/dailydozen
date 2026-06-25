@@ -245,7 +245,6 @@ function renderLogin() {
         </button>
       </form>
 
-      <p class="login-hint">Default PINs: You <strong>1111</strong>, Wife <strong>2222</strong>. Edit them at the top of <code>app.js</code>.</p>
     </section>
   `;
 }
