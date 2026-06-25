@@ -1,14 +1,14 @@
 const USERS = [
   {
     id: "you",
-    name: "You",
+    name: "Scotty P.",
     pin: "1111",
     color: "#b84a3c",
     room: "Room 01",
   },
   {
     id: "wife",
-    name: "Wife",
+    name: "Claudie D.",
     pin: "2222",
     color: "#2f6f73",
     room: "Room 02",
