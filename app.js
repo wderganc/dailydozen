@@ -64,6 +64,7 @@ function loadData() {
     items: DEFAULT_ITEMS,
     completions: {},
     notes: {},
+    sharedNotes: {},
   };
 
   try {
@@ -74,6 +75,7 @@ function loadData() {
       items: normalizeItems(parsed.items),
       completions: parsed.completions || {},
       notes: parsed.notes || {},
+      sharedNotes: parsed.sharedNotes || {},
     };
   } catch {
     return fallback;
@@ -146,6 +148,16 @@ function setNote(userId, value) {
   const dateKey = state.selectedDate;
   state.data.notes[dateKey] ||= {};
   state.data.notes[dateKey][userId] = value;
+  saveData();
+}
+
+function getSharedNote(dateKey = state.selectedDate) {
+  return state.data.sharedNotes?.[dateKey] || "";
+}
+
+function setSharedNote(value) {
+  state.data.sharedNotes ||= {};
+  state.data.sharedNotes[state.selectedDate] = value;
   saveData();
 }
 
@@ -323,11 +335,20 @@ function renderDashboard(user) {
           <div class="mini-marquee" aria-hidden="true">
             <span></span><span></span><span></span><span></span>
           </div>
-          <div class="section-heading">
-            <p class="eyebrow">Small note</p>
-            <h2>Leave a line for later</h2>
+          <div class="note-block note-block-shared">
+            <div class="section-heading">
+              <p class="eyebrow">For both of you</p>
+              <h2>Shared note</h2>
+            </div>
+            <textarea data-shared-note maxlength="360" placeholder="Leave a note you both can see.">${escapeHtml(getSharedNote())}</textarea>
           </div>
-          <textarea data-note maxlength="240" placeholder="One sentence about today.">${escapeHtml(getNote(user.id))}</textarea>
+          <div class="note-block">
+            <div class="section-heading">
+              <p class="eyebrow">Your note</p>
+              <h2>Private line</h2>
+            </div>
+            <textarea data-note maxlength="240" placeholder="One sentence about today.">${escapeHtml(getNote(user.id))}</textarea>
+          </div>
           <div class="partner-glance">
             <span style="--user-color: ${partner.color}"></span>
             <p>${escapeHtml(partner.name)} is at <strong>${getProgress(partner.id).count}/12</strong>.</p>
@@ -453,6 +474,10 @@ function bindEvents() {
 
   document.querySelector("[data-note]")?.addEventListener("input", (event) => {
     setNote(getUser().id, event.currentTarget.value);
+  });
+
+  document.querySelector("[data-shared-note]")?.addEventListener("input", (event) => {
+    setSharedNote(event.currentTarget.value);
   });
 
   document.querySelector("[data-open-settings]")?.addEventListener("click", () => {

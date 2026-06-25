@@ -685,6 +685,19 @@ code {
   background: var(--sky);
 }
 
+.note-block + .note-block {
+  margin-top: 16px;
+}
+
+.note-block .section-heading {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.note-block .section-heading h2 {
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+}
+
 .mini-marquee {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -714,6 +727,17 @@ code {
     #fffdfa;
   font-weight: 800;
   line-height: 33px;
+}
+
+.note-block-shared textarea {
+  min-height: 176px;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 31px, rgba(38, 48, 41, 0.16) 31px 33px),
+    color-mix(in srgb, var(--mustard) 16%, #fffdfa);
+}
+
+.note-block:not(.note-block-shared) textarea {
+  min-height: 126px;
 }
 
 .partner-glance {
@@ -850,17 +874,21 @@ code {
     gap: 18px;
   }
 
-  .side-panel .section-heading {
+  .note-block {
     grid-column: 1;
   }
 
-  .side-panel textarea {
-    grid-column: 1;
+  .note-block + .note-block {
+    margin-top: 0;
   }
 
   .mini-marquee,
   .partner-glance {
     grid-column: 2;
+  }
+
+  .partner-glance {
+    margin-top: 0;
   }
 }
 
@@ -912,6 +940,14 @@ code {
 
   .side-panel {
     display: block;
+  }
+
+  .note-block + .note-block {
+    margin-top: 16px;
+  }
+
+  .partner-glance {
+    margin-top: 14px;
   }
 
   .mini-marquee {
