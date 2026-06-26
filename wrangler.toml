@@ -1,0 +1,8 @@
+name = "dailydozen"
+compatibility_date = "2026-06-26"
+pages_build_output_dir = "."
+
+[[kv_namespaces]]
+binding = "DAILY_DOZEN"
+id = "1ab2b73d9bd642b5a91da65c792c848d"
+preview_id = "1ab2b73d9bd642b5a91da65c792c848d"

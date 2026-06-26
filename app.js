@@ -47,8 +47,12 @@ const ITEM_ICONS = [
 
 const STORAGE_KEY = "daily-dozen-state-v1";
 const SESSION_KEY = "daily-dozen-session-v1";
+const API_STATE_URL = "/api/state";
+const REMOTE_SYNC_INTERVAL_MS = 15000;
 
 const app = document.querySelector("#app");
+let remoteSaveTimer;
+let remoteSyncTimer;
 
 const state = {
   currentUserId: sessionStorage.getItem(SESSION_KEY),
@@ -57,15 +61,20 @@ const state = {
   activeLoginUserId: USERS[0].id,
   loginError: "",
   settingsOpen: false,
+  remoteReady: false,
 };
 
-function loadData() {
-  const fallback = {
+function getDefaultData() {
+  return {
     items: DEFAULT_ITEMS,
     completions: {},
     notes: {},
     sharedNotes: {},
   };
+}
+
+function loadData() {
+  const fallback = getDefaultData();
 
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -82,14 +91,156 @@ function loadData() {
   }
 }
 
+function normalizeData(data) {
+  return {
+    items: normalizeItems(Array.isArray(data?.items) ? data.items : DEFAULT_ITEMS),
+    completions: data?.completions && typeof data.completions === "object" ? data.completions : {},
+    notes: data?.notes && typeof data.notes === "object" ? data.notes : {},
+    sharedNotes: data?.sharedNotes && typeof data.sharedNotes === "object" ? data.sharedNotes : {},
+  };
+}
+
 function normalizeItems(items) {
   const normalized = items.map((item) => String(item || "").trim()).filter(Boolean);
   const withDefaults = [...normalized, ...DEFAULT_ITEMS].slice(0, 12);
   return withDefaults;
 }
 
-function saveData() {
+function saveLocalData() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+}
+
+function saveData() {
+  saveLocalData();
+  scheduleRemoteSave();
+}
+
+function scheduleRemoteSave() {
+  window.clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = window.setTimeout(saveRemoteData, 450);
+}
+
+async function saveRemoteData() {
+  try {
+    const response = await fetch(API_STATE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ data: state.data }),
+    });
+
+    if (!response.ok) throw new Error(`Remote save failed: ${response.status}`);
+    state.remoteReady = true;
+  } catch {
+    state.remoteReady = false;
+  }
+}
+
+async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) {
+  try {
+    const response = await fetch(API_STATE_URL, {
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) throw new Error(`Remote load failed: ${response.status}`);
+
+    const payload = await response.json();
+    const remoteData = normalizeData(payload.data);
+    state.data = mergeLocal ? mergeData(remoteData, state.data) : remoteData;
+    state.remoteReady = true;
+    saveLocalData();
+
+    if (mergeLocal && hasLocalActivity(state.data)) {
+      scheduleRemoteSave();
+    }
+
+    if (renderAfter && !isTextEditing()) {
+      render();
+    }
+  } catch {
+    state.remoteReady = false;
+  }
+}
+
+function mergeData(remoteData, localData) {
+  const remote = normalizeData(remoteData);
+  const local = normalizeData(localData);
+
+  return {
+    items: areDefaultItems(remote.items) ? local.items : remote.items,
+    completions: mergeCompletionSets(local.completions, remote.completions),
+    notes: mergeNestedObjects(local.notes, remote.notes),
+    sharedNotes: {
+      ...local.sharedNotes,
+      ...remote.sharedNotes,
+    },
+  };
+}
+
+function mergeNestedObjects(base, override) {
+  const merged = { ...base };
+
+  Object.entries(override || {}).forEach(([dateKey, value]) => {
+    merged[dateKey] = {
+      ...(merged[dateKey] || {}),
+      ...(value || {}),
+    };
+  });
+
+  return merged;
+}
+
+function mergeCompletionSets(base, override) {
+  const merged = mergeNestedObjects(base, override);
+
+  Object.entries(base || {}).forEach(([dateKey, users]) => {
+    Object.entries(users || {}).forEach(([userId, items]) => {
+      const current = new Set(merged[dateKey]?.[userId] || []);
+      items.forEach((item) => current.add(item));
+      merged[dateKey] ||= {};
+      merged[dateKey][userId] = [...current].sort((a, b) => a - b);
+    });
+  });
+
+  return merged;
+}
+
+function areDefaultItems(items) {
+  return normalizeItems(items).every((item, index) => item === DEFAULT_ITEMS[index]);
+}
+
+function hasLocalActivity(data) {
+  return (
+    !areDefaultItems(data.items) ||
+    Object.keys(data.completions || {}).length > 0 ||
+    Object.keys(data.notes || {}).length > 0 ||
+    Object.keys(data.sharedNotes || {}).length > 0
+  );
+}
+
+function isTextEditing() {
+  return Boolean(document.activeElement?.matches("input, textarea"));
+}
+
+function startRemoteSync() {
+  loadRemoteData({ mergeLocal: true, renderAfter: true });
+
+  window.clearInterval(remoteSyncTimer);
+  remoteSyncTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible" && !isTextEditing()) {
+      loadRemoteData({ renderAfter: Boolean(getUser()) });
+    }
+  }, REMOTE_SYNC_INTERVAL_MS);
+
+  window.addEventListener("focus", () => {
+    if (!isTextEditing()) {
+      loadRemoteData({ renderAfter: Boolean(getUser()) });
+    }
+  });
 }
 
 function toDateKey(date) {
@@ -527,3 +678,4 @@ function escapeAttribute(value) {
 }
 
 render();
+startRemoteSync();
