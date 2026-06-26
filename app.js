@@ -59,6 +59,7 @@ const state = {
   selectedDate: toDateKey(new Date()),
   data: loadData(),
   activeLoginUserId: USERS[0].id,
+  loginPin: "",
   loginError: "",
   settingsOpen: false,
   remoteReady: false,
@@ -398,7 +399,7 @@ function renderLogin() {
         <label class="field-label" for="pin">PIN</label>
         <div class="pin-wrap">
           ${iconMarkup("key")}
-          <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Enter PIN" />
+          <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Enter PIN" value="${escapeAttribute(state.loginPin)}" data-pin />
         </div>
         ${state.loginError ? `<p class="form-error">${escapeHtml(state.loginError)}</p>` : ""}
 
@@ -576,6 +577,7 @@ function renderSettings() {
 function bindEvents() {
   document.querySelectorAll("[data-login-user]").forEach((button) => {
     button.addEventListener("click", () => {
+      state.loginPin = document.querySelector("#pin")?.value || state.loginPin;
       state.activeLoginUserId = button.dataset.loginUser;
       state.loginError = "";
       render();
@@ -583,16 +585,22 @@ function bindEvents() {
     });
   });
 
+  document.querySelector("[data-pin]")?.addEventListener("input", (event) => {
+    state.loginPin = event.currentTarget.value;
+  });
+
   document.querySelector("[data-login-form]")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const pin = String(form.get("pin") || "");
+    state.loginPin = pin;
     const user = USERS.find((candidate) => candidate.id === state.activeLoginUserId);
 
     if (user?.pin === pin) {
       state.currentUserId = user.id;
       sessionStorage.setItem(SESSION_KEY, user.id);
       state.loginError = "";
+      state.loginPin = "";
       render();
       return;
     }
