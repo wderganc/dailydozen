@@ -285,6 +285,39 @@ h2 {
   padding: 0;
 }
 
+.sync-pill {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--paper);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.sync-pill:hover {
+  border-color: var(--link);
+  color: var(--link);
+  background: var(--link-soft);
+}
+
+.sync-pill[data-sync-status="synced"] {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 42%, var(--line));
+}
+
+.sync-pill[data-sync-status="saving"],
+.sync-pill[data-sync-status="checking"] {
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 44%, var(--line));
+}
+
+.sync-pill[data-sync-status="local"] {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 44%, var(--line));
+}
+
 code {
   padding: 1px 4px;
   border: 1px solid var(--line);

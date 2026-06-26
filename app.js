@@ -63,6 +63,8 @@ const state = {
   loginError: "",
   settingsOpen: false,
   remoteReady: false,
+  remoteStatus: "checking",
+  remoteError: "",
 };
 
 function getDefaultData() {
@@ -111,8 +113,15 @@ function saveLocalData() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
 }
 
-function saveData() {
+function saveData({ immediate = false } = {}) {
   saveLocalData();
+
+  if (immediate) {
+    window.clearTimeout(remoteSaveTimer);
+    saveRemoteData();
+    return;
+  }
+
   scheduleRemoteSave();
 }
 
@@ -122,6 +131,9 @@ function scheduleRemoteSave() {
 }
 
 async function saveRemoteData() {
+  state.remoteStatus = "saving";
+  updateSyncIndicator();
+
   try {
     const response = await fetch(API_STATE_URL, {
       method: "POST",
@@ -133,12 +145,21 @@ async function saveRemoteData() {
 
     if (!response.ok) throw new Error(`Remote save failed: ${response.status}`);
     state.remoteReady = true;
-  } catch {
+    state.remoteStatus = "synced";
+    state.remoteError = "";
+  } catch (error) {
     state.remoteReady = false;
+    state.remoteStatus = "local";
+    state.remoteError = error.message || "Remote save failed.";
+  } finally {
+    updateSyncIndicator();
   }
 }
 
 async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) {
+  state.remoteStatus = "checking";
+  updateSyncIndicator();
+
   try {
     const response = await fetch(API_STATE_URL, {
       headers: {
@@ -153,6 +174,8 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
     const remoteData = normalizeData(payload.data);
     state.data = mergeLocal ? mergeData(remoteData, state.data) : remoteData;
     state.remoteReady = true;
+    state.remoteStatus = "synced";
+    state.remoteError = "";
     saveLocalData();
 
     if (mergeLocal && hasLocalActivity(state.data)) {
@@ -161,10 +184,34 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
 
     if (renderAfter && !isTextEditing()) {
       render();
+    } else {
+      updateSyncIndicator();
     }
-  } catch {
+  } catch (error) {
     state.remoteReady = false;
+    state.remoteStatus = "local";
+    state.remoteError = error.message || "Remote load failed.";
+    updateSyncIndicator();
   }
+}
+
+function getSyncLabel() {
+  const labels = {
+    checking: "sync checking",
+    saving: "sync saving",
+    synced: "synced",
+    local: "local only",
+  };
+
+  return labels[state.remoteStatus] || "sync";
+}
+
+function updateSyncIndicator() {
+  document.querySelectorAll("[data-sync-status]").forEach((element) => {
+    element.textContent = getSyncLabel();
+    element.dataset.syncStatus = state.remoteStatus;
+    element.title = state.remoteError || "Shared Cloudflare KV sync";
+  });
 }
 
 function mergeData(remoteData, localData) {
@@ -289,7 +336,7 @@ function setCompletion(userId, itemIndex, checked) {
   }
 
   state.data.completions[dateKey][userId] = [...current].sort((a, b) => a - b);
-  saveData();
+  saveData({ immediate: true });
 }
 
 function getNote(userId, dateKey = state.selectedDate) {
@@ -429,6 +476,7 @@ function renderDashboard(user) {
           </div>
         </div>
         <div class="header-actions">
+          <button class="sync-pill" type="button" data-sync-now data-sync-status="${state.remoteStatus}" title="${escapeAttribute(state.remoteError || "Shared Cloudflare KV sync")}">${getSyncLabel()}</button>
           <button class="icon-button" type="button" data-open-settings aria-label="Edit dozen items" title="Edit dozen items">
             ${iconMarkup("edit")}
           </button>
@@ -622,6 +670,11 @@ function bindEvents() {
   document.querySelector("[data-today]")?.addEventListener("click", () => {
     state.selectedDate = toDateKey(new Date());
     render();
+  });
+
+  document.querySelector("[data-sync-now]")?.addEventListener("click", async () => {
+    await saveRemoteData();
+    await loadRemoteData({ renderAfter: Boolean(getUser()) });
   });
 
   document.querySelectorAll("[data-item-index]").forEach((checkbox) => {
