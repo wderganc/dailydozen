@@ -63,6 +63,7 @@ function normalizeData(data) {
     completions: normalizeObject(data?.completions),
     notes: normalizeObject(data?.notes),
     sharedNotes: normalizeObject(data?.sharedNotes),
+    sharedNoteMeta: normalizeObject(data?.sharedNoteMeta),
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
   };

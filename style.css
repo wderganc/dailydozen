@@ -263,6 +263,7 @@ h2 {
 }
 
 .desktop-icon {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 4px;
@@ -275,10 +276,20 @@ h2 {
   background: transparent;
   font: inherit;
   text-align: center;
+  touch-action: none;
+  transform: translate(var(--icon-x, 0), var(--icon-y, 0));
+  user-select: none;
+  z-index: 1;
 }
 
 .desktop-drop-target {
   cursor: copy;
+}
+
+.desktop-icon.is-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(3px 4px 0 rgba(0, 0, 0, 0.28));
+  z-index: 6;
 }
 
 .desktop-drop-target.is-drag-over span,
@@ -1125,6 +1136,27 @@ button:focus {
 
 .note-block .section-heading h2 {
   font-size: 13px;
+}
+
+.message-meta {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.note-block-shared.has-unread {
+  background:
+    linear-gradient(90deg, #ffffff 0 7px, transparent 7px),
+    var(--chrome);
+}
+
+.note-block-shared.has-unread .section-heading h2 {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.note-block-shared.has-unread textarea {
+  border-color: #000000;
 }
 
 .partner-glance {

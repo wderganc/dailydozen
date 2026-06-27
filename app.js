@@ -48,6 +48,8 @@ const ITEM_ICONS = [
 const STORAGE_KEY = "daily-dozen-state-v1";
 const SESSION_KEY = "daily-dozen-session-v1";
 const CRT_KEY = "daily-dozen-crt-v1";
+const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
+const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const API_STATE_URL = "/api/state";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -70,7 +72,53 @@ const state = {
   remoteStatus: "checking",
   remoteError: "",
   crtEnabled: loadCrtPreference(),
+  iconPositions: loadIconPositions(),
+  messageReads: loadMessageReads(),
 };
+
+function loadIconPositions() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ICON_POSITIONS_KEY));
+    if (!parsed || typeof parsed !== "object") return {};
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([id, position]) => [
+          id,
+          {
+            x: clampIconCoordinate(position?.x),
+            y: clampIconCoordinate(position?.y),
+          },
+        ])
+        .filter(([, position]) => position.x || position.y),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function clampIconCoordinate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(-900, Math.min(900, Math.round(number)));
+}
+
+function saveIconPositions() {
+  localStorage.setItem(ICON_POSITIONS_KEY, JSON.stringify(state.iconPositions));
+}
+
+function loadMessageReads() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MESSAGE_READS_KEY));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMessageReads() {
+  localStorage.setItem(MESSAGE_READS_KEY, JSON.stringify(state.messageReads));
+}
 
 function setDesktopBackground(imageData) {
   state.data.wallpaper = imageData;
@@ -108,6 +156,7 @@ function getDefaultData() {
     completions: {},
     notes: {},
     sharedNotes: {},
+    sharedNoteMeta: {},
     wallpaper: "",
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
   };
@@ -125,6 +174,7 @@ function loadData() {
       completions: parsed.completions || {},
       notes: parsed.notes || {},
       sharedNotes: parsed.sharedNotes || {},
+      sharedNoteMeta: parsed.sharedNoteMeta || {},
       wallpaper: normalizeWallpaper(parsed.wallpaper),
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
     };
@@ -139,6 +189,7 @@ function normalizeData(data) {
     completions: data?.completions && typeof data.completions === "object" ? data.completions : {},
     notes: data?.notes && typeof data.notes === "object" ? data.notes : {},
     sharedNotes: data?.sharedNotes && typeof data.sharedNotes === "object" ? data.sharedNotes : {},
+    sharedNoteMeta: data?.sharedNoteMeta && typeof data.sharedNoteMeta === "object" ? data.sharedNoteMeta : {},
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
   };
@@ -280,6 +331,10 @@ function mergeData(remoteData, localData) {
       ...local.sharedNotes,
       ...remote.sharedNotes,
     },
+    sharedNoteMeta: {
+      ...local.sharedNoteMeta,
+      ...remote.sharedNoteMeta,
+    },
     wallpaper: remote.wallpaper || local.wallpaper || "",
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
   };
@@ -323,6 +378,7 @@ function hasLocalActivity(data) {
     Object.keys(data.completions || {}).length > 0 ||
     Object.keys(data.notes || {}).length > 0 ||
     Object.keys(data.sharedNotes || {}).length > 0 ||
+    Object.keys(data.sharedNoteMeta || {}).length > 0 ||
     Boolean(data.wallpaper) ||
     data.wallpaperMode === "fill"
   );
@@ -414,8 +470,100 @@ function getSharedNote(dateKey = state.selectedDate) {
 
 function setSharedNote(value) {
   state.data.sharedNotes ||= {};
+  state.data.sharedNoteMeta ||= {};
   state.data.sharedNotes[state.selectedDate] = value;
+  const user = getUser();
+
+  if (user) {
+    const messageId = createMessageId(user.id);
+    state.data.sharedNoteMeta[state.selectedDate] = {
+      editorId: user.id,
+      editedAt: new Date().toISOString(),
+      messageId,
+    };
+    markMessageIdRead(user.id, state.selectedDate, messageId);
+  }
+
   saveData();
+}
+
+function createMessageId(userId) {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `${userId}-${Date.now()}`;
+}
+
+function getSharedNoteMeta(dateKey = state.selectedDate) {
+  const meta = state.data.sharedNoteMeta?.[dateKey];
+  return meta && typeof meta === "object" ? meta : {};
+}
+
+function getSharedNoteStatus(userId, dateKey = state.selectedDate) {
+  const meta = getSharedNoteMeta(dateKey);
+  const messageId = meta.messageId || "";
+  const editor = USERS.find((candidate) => candidate.id === meta.editorId);
+  const unread = Boolean(
+    messageId &&
+      userId &&
+      meta.editorId &&
+      meta.editorId !== userId &&
+      state.messageReads[userId]?.[dateKey] !== messageId,
+  );
+
+  return {
+    unread,
+    from: editor?.name || "Daily Dozen",
+    editedAt: meta.editedAt ? formatMessageTime(meta.editedAt) : "",
+    messageId,
+  };
+}
+
+function formatMessageTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function markMessageIdRead(userId, dateKey, messageId) {
+  if (!userId || !messageId) return;
+  state.messageReads[userId] ||= {};
+  state.messageReads[userId][dateKey] = messageId;
+  saveMessageReads();
+}
+
+function markSharedNoteRead() {
+  const user = getUser();
+  if (!user) return;
+
+  const status = getSharedNoteStatus(user.id);
+  if (!status.messageId || !status.unread) return;
+
+  markMessageIdRead(user.id, state.selectedDate, status.messageId);
+  updateSharedMessageIndicator();
+}
+
+function updateSharedMessageIndicator() {
+  const user = getUser();
+  if (!user) return;
+
+  const status = getSharedNoteStatus(user.id);
+  const block = document.querySelector("[data-shared-message-state]");
+  block?.classList.toggle("has-unread", status.unread);
+  if (block) block.dataset.sharedMessageState = status.unread ? "unread" : "read";
+
+  const from = document.querySelector("[data-shared-message-from]");
+  if (from) from.textContent = status.unread ? `From ${status.from}` : "For both of you";
+
+  const title = document.querySelector("[data-shared-message-title]");
+  if (title) title.textContent = status.unread ? "1 new message" : "Shared note";
+
+  const meta = document.querySelector("[data-shared-message-meta]");
+  if (meta) meta.textContent = status.editedAt ? `Last edited ${status.editedAt}` : "";
 }
 
 function getProgress(userId, dateKey = state.selectedDate) {
@@ -501,39 +649,39 @@ function renderMacShell(content) {
         <input class="background-file-input" type="file" accept="image/*" data-background-file />
 
         <div class="desktop-icons">
-          <button class="desktop-icon desktop-drop-target" type="button" data-background-drop aria-label="Choose or drop a shared desktop background image" title="Drop an image here to change the shared desktop background">
+          <button class="desktop-icon desktop-drop-target" type="button" data-desktop-icon="daily-dozen-hd" data-background-drop aria-label="Choose or drop a shared desktop background image" title="Drop an image here to change the shared desktop background" style="${getDesktopIconStyle("daily-dozen-hd")}">
             <span class="icon-drive"></span>
             <strong>Daily Dozen HD</strong>
           </button>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="kimchi-quest" style="${getDesktopIconStyle("kimchi-quest")}">
             <span class="icon-kimchi"></span>
             <strong>Kimchi Quest</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="bird-calls" style="${getDesktopIconStyle("bird-calls")}">
             <span class="icon-bird"></span>
             <strong>Bird Calls</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="claudias-seed-collection" style="${getDesktopIconStyle("claudias-seed-collection")}">
             <span class="icon-folder"></span>
             <strong>Claudia's Seed Collection</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="monkey-see-genevieve-do" style="${getDesktopIconStyle("monkey-see-genevieve-do")}">
             <span class="icon-monkey"></span>
             <strong>Monkey See Genevieve Do</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="ulaylee" style="${getDesktopIconStyle("ulaylee")}">
             <span class="icon-ukulele"></span>
             <strong>ULaylee</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="colored-pencils" style="${getDesktopIconStyle("colored-pencils")}">
             <span class="icon-pencils"></span>
             <strong>Colored Pencils</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="genevieves-seed-collection" style="${getDesktopIconStyle("genevieves-seed-collection")}">
             <span class="icon-folder icon-folder-green"></span>
             <strong>Genevieve's Seed Collection</strong>
           </div>
-          <div class="desktop-icon">
+          <div class="desktop-icon" data-desktop-icon="trash" style="${getDesktopIconStyle("trash")}">
             <span class="icon-trash"></span>
             <strong>Trash</strong>
           </div>
@@ -557,6 +705,12 @@ function getDesktopBackgroundStyle() {
 
 function getDesktopBackground() {
   return state.data.wallpaper || "";
+}
+
+function getDesktopIconStyle(id) {
+  const position = state.iconPositions[id];
+  if (!position) return "";
+  return `--icon-x: ${position.x}px; --icon-y: ${position.y}px;`;
 }
 
 function getWallpaperMode() {
@@ -625,6 +779,7 @@ function renderDashboard(user) {
   const progress = getProgress(user.id);
   const partner = USERS.find((candidate) => candidate.id !== user.id);
   const userItems = getCompletion(user.id);
+  const sharedStatus = getSharedNoteStatus(user.id);
 
   return `
     <section class="dashboard mac-program">
@@ -697,10 +852,11 @@ function renderDashboard(user) {
           <div class="mini-marquee" aria-hidden="true">
             <span></span><span></span><span></span><span></span>
           </div>
-          <div class="note-block note-block-shared mac-window" data-window-title="Shared Note">
+          <div class="note-block note-block-shared ${sharedStatus.unread ? "has-unread" : ""} mac-window" data-window-title="Shared Note" data-shared-message-state="${sharedStatus.unread ? "unread" : "read"}">
             <div class="section-heading">
-              <p class="eyebrow">For both of you</p>
-              <h2>Shared note</h2>
+              <p class="eyebrow" data-shared-message-from>${sharedStatus.unread ? `From ${escapeHtml(sharedStatus.from)}` : "For both of you"}</p>
+              <h2 data-shared-message-title>${sharedStatus.unread ? "1 new message" : "Shared note"}</h2>
+              <p class="message-meta" data-shared-message-meta>${sharedStatus.editedAt ? `Last edited ${escapeHtml(sharedStatus.editedAt)}` : ""}</p>
             </div>
             <textarea data-shared-note maxlength="360" placeholder="Leave a note you both can see.">${escapeHtml(getSharedNote())}</textarea>
           </div>
@@ -841,6 +997,7 @@ function bindEvents() {
   });
 
   bindDesktopBackgroundEvents();
+  bindDesktopIconDragging();
 
   document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
     toggleWallpaperMode();
@@ -862,7 +1019,10 @@ function bindEvents() {
     setNote(getUser().id, event.currentTarget.value);
   });
 
-  document.querySelector("[data-shared-note]")?.addEventListener("input", (event) => {
+  const sharedNote = document.querySelector("[data-shared-note]");
+  sharedNote?.addEventListener("focus", markSharedNoteRead);
+  sharedNote?.addEventListener("click", markSharedNoteRead);
+  sharedNote?.addEventListener("input", (event) => {
     setSharedNote(event.currentTarget.value);
   });
 
@@ -906,6 +1066,11 @@ function bindDesktopBackgroundEvents() {
   if (!dropTarget || !fileInput) return;
 
   dropTarget.addEventListener("click", () => {
+    if (dropTarget.dataset.dragMoved === "true") {
+      dropTarget.dataset.dragMoved = "";
+      return;
+    }
+
     fileInput.click();
   });
 
@@ -937,6 +1102,76 @@ function bindDesktopBackgroundEvents() {
     const file = event.dataTransfer?.files?.[0];
     if (file) setDesktopBackgroundFromFile(file);
   });
+}
+
+function bindDesktopIconDragging() {
+  document.querySelectorAll("[data-desktop-icon]").forEach((icon) => {
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let baseX = 0;
+    let baseY = 0;
+    let moved = false;
+
+    icon.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+
+      const id = icon.dataset.desktopIcon;
+      const position = state.iconPositions[id] || { x: 0, y: 0 };
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startY = event.clientY;
+      baseX = position.x;
+      baseY = position.y;
+      moved = false;
+      icon.classList.add("is-dragging");
+      icon.setPointerCapture(pointerId);
+    });
+
+    icon.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== pointerId) return;
+
+      const deltaX = event.clientX - startX;
+      const deltaY = event.clientY - startY;
+
+      if (!moved && Math.hypot(deltaX, deltaY) < 4) return;
+
+      moved = true;
+      setIconOffset(icon, baseX + deltaX, baseY + deltaY);
+    });
+
+    icon.addEventListener("pointerup", (event) => {
+      if (event.pointerId !== pointerId) return;
+      finishIconDrag(icon, moved);
+      pointerId = null;
+    });
+
+    icon.addEventListener("pointercancel", () => {
+      finishIconDrag(icon, moved);
+      pointerId = null;
+    });
+  });
+}
+
+function finishIconDrag(icon, moved) {
+  icon.classList.remove("is-dragging");
+
+  if (!moved) return;
+
+  const id = icon.dataset.desktopIcon;
+  const x = clampIconCoordinate(icon.style.getPropertyValue("--icon-x").replace("px", ""));
+  const y = clampIconCoordinate(icon.style.getPropertyValue("--icon-y").replace("px", ""));
+  state.iconPositions[id] = { x, y };
+  saveIconPositions();
+
+  if (icon.matches("[data-background-drop]")) {
+    icon.dataset.dragMoved = "true";
+  }
+}
+
+function setIconOffset(icon, x, y) {
+  icon.style.setProperty("--icon-x", `${clampIconCoordinate(x)}px`);
+  icon.style.setProperty("--icon-y", `${clampIconCoordinate(y)}px`);
 }
 
 function setDesktopBackgroundFromFile(file) {
