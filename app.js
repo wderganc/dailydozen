@@ -52,8 +52,9 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-27 03:06:59 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-27 03:28:44 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
+const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
 const DESKTOP_PICTURE_MAX_SIDE = 900;
@@ -84,10 +85,12 @@ const CLAUDIA_SEEDS = [
 
 const app = document.querySelector("#app");
 let remoteSaveTimer;
+let remoteSaveOptions = {};
 let remoteSyncTimer;
 let facetimeSharedVideoUrl = "";
 let facetimeSharedVideoData = "";
 let facetimeSharedVideoKey = "";
+const facetimeVideoLoads = {};
 
 const state = {
   currentUserId: sessionStorage.getItem(SESSION_KEY),
@@ -173,7 +176,7 @@ function saveFacetimeVideoReads() {
 function setDesktopBackground(imageData) {
   state.data.wallpaper = imageData;
   state.data.wallpaperMode ||= DEFAULT_WALLPAPER_MODE;
-  saveData({ immediate: true });
+  saveData({ immediate: true, includeWallpaper: true });
 }
 
 function toggleWallpaperMode() {
@@ -290,11 +293,11 @@ function normalizeFacetimeVideos(value, legacyVideo) {
       if (!USERS.some((user) => user.id === userId)) return;
 
       const normalized = normalizeFacetimeVideo(video, userId);
-      if (hasFacetimeVideo(normalized)) videos[userId] = normalized;
+      if (hasFacetimeVideoRecord(normalized)) videos[userId] = normalized;
     });
   }
 
-  if (!hasFacetimeVideos(videos)) {
+  if (!hasFacetimeVideoRecords(videos)) {
     const legacy = normalizeFacetimeVideo(legacyVideo);
     if (hasFacetimeVideo(legacy)) {
       const userId = inferFacetimeUploaderId(legacy) || USERS[0].id;
@@ -314,7 +317,12 @@ function normalizeFacetimeVideo(value, fallbackUserId = "") {
   const type = normalizeVideoMimeType(value.type, value.name);
   const rawData = typeof value.data === "string" ? value.data : "";
   const data = normalizeVideoDataUrl(rawData, type);
-  if (!data.startsWith("data:video/")) return {};
+  const uploadedAt = normalizeShortText(value.uploadedAt, "", 48);
+  const videoId =
+    normalizeShortText(value.videoId, "", 96) ||
+    uploadedAt ||
+    (data.startsWith("data:video/") ? getFacetimeVideoFallbackId(data, uploadedAt) : "");
+  if (!data.startsWith("data:video/") && !videoId) return {};
   const uploadedUserId = USERS.some((user) => user.id === value.uploadedUserId)
     ? value.uploadedUserId
     : fallbackUserId;
@@ -325,9 +333,9 @@ function normalizeFacetimeVideo(value, fallbackUserId = "") {
     type,
     size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
     uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
-    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+    uploadedAt,
     uploadedUserId,
-    videoId: normalizeShortText(value.videoId, "", 96) || getFacetimeVideoFallbackId(data, value.uploadedAt),
+    videoId,
   };
 }
 
@@ -388,24 +396,78 @@ function saveLocalData() {
   }
 }
 
-function saveData({ immediate = false } = {}) {
+function saveData({ immediate = false, includeWallpaper = false, includeDesktopPictures = false, includeFacetimeVideos = false, facetimeUserId = "" } = {}) {
   saveLocalData();
+  const options = {
+    includeWallpaper,
+    includeDesktopPictures,
+    includeFacetimeVideos,
+    facetimeUserId,
+  };
 
   if (immediate) {
     window.clearTimeout(remoteSaveTimer);
-    saveRemoteData();
+    const pendingOptions = mergeRemoteSaveOptions(remoteSaveOptions, options);
+    remoteSaveOptions = {};
+    saveRemoteData(pendingOptions);
     return;
   }
 
-  scheduleRemoteSave();
+  scheduleRemoteSave(options);
 }
 
-function scheduleRemoteSave() {
+function scheduleRemoteSave(options = {}) {
+  remoteSaveOptions = mergeRemoteSaveOptions(remoteSaveOptions, options);
   window.clearTimeout(remoteSaveTimer);
-  remoteSaveTimer = window.setTimeout(saveRemoteData, 450);
+  remoteSaveTimer = window.setTimeout(() => {
+    const pendingOptions = remoteSaveOptions;
+    remoteSaveOptions = {};
+    saveRemoteData(pendingOptions);
+  }, REMOTE_SAVE_DEBOUNCE_MS);
 }
 
-async function saveRemoteData() {
+function mergeRemoteSaveOptions(current = {}, incoming = {}) {
+  return {
+    includeWallpaper: Boolean(current.includeWallpaper || incoming.includeWallpaper),
+    includeDesktopPictures: Boolean(current.includeDesktopPictures || incoming.includeDesktopPictures),
+    includeFacetimeVideos: Boolean(current.includeFacetimeVideos || incoming.includeFacetimeVideos),
+    facetimeUserId: incoming.facetimeUserId || current.facetimeUserId || "",
+  };
+}
+
+function getRemoteStateUrl({ includeMedia = false } = {}) {
+  return includeMedia ? API_STATE_URL : `${API_STATE_URL}?media=lite`;
+}
+
+function getFacetimeVideoApiUrl(userId) {
+  return `${API_STATE_URL}?facetimeVideo=${encodeURIComponent(userId || "")}`;
+}
+
+function getDataForRemoteSave(data, options = {}) {
+  const normalized = normalizeData(data);
+
+  return {
+    ...normalized,
+    wallpaper: options.includeWallpaper ? normalized.wallpaper : "",
+    desktopPictures: options.includeDesktopPictures ? normalized.desktopPictures : [],
+    facetimeVideos: getFacetimeVideosForRemoteSave(normalized.facetimeVideos, options),
+  };
+}
+
+function getFacetimeVideosForRemoteSave(videos, options = {}) {
+  const normalized = normalizeFacetimeVideos(videos);
+
+  if (!options.includeFacetimeVideos) return getFacetimeVideoMetadataMap(normalized);
+
+  return Object.fromEntries(
+    Object.entries(normalized).map(([userId, video]) => [
+      userId,
+      !options.facetimeUserId || userId === options.facetimeUserId ? video : getFacetimeVideoMetadata(video),
+    ]),
+  );
+}
+
+async function saveRemoteData(options = {}) {
   state.remoteStatus = "saving";
   updateSyncIndicator();
 
@@ -413,7 +475,7 @@ async function saveRemoteData() {
     let dataToSave = state.data;
 
     try {
-      const currentResponse = await fetch(API_STATE_URL, {
+      const currentResponse = await fetch(getRemoteStateUrl({ includeMedia: false }), {
         headers: {
           Accept: "application/json",
         },
@@ -423,12 +485,7 @@ async function saveRemoteData() {
       if (currentResponse.ok) {
         const currentPayload = await currentResponse.json();
         const currentData = normalizeData(currentPayload.data);
-        dataToSave = {
-          ...state.data,
-          iconPositions: mergeIconPositions(currentData.iconPositions, state.data.iconPositions),
-          desktopPictures: mergeDesktopPictures(currentData.desktopPictures, state.data.desktopPictures),
-          facetimeVideos: mergeFacetimeVideos(currentData.facetimeVideos, state.data.facetimeVideos),
-        };
+        dataToSave = mergeData(currentData, state.data);
         state.data = dataToSave;
         saveLocalData();
       }
@@ -439,14 +496,13 @@ async function saveRemoteData() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ data: dataToSave }),
+      body: JSON.stringify({ data: getDataForRemoteSave(dataToSave, options) }),
     });
 
     if (!response.ok) throw new Error(`Remote save failed: ${response.status}`);
     const savedPayload = await response.json().catch(() => null);
     const savedData = normalizeData(savedPayload?.data);
-    state.data.desktopPictures = mergeDesktopPictures(savedData.desktopPictures, state.data.desktopPictures);
-    state.data.facetimeVideos = mergeFacetimeVideos(savedData.facetimeVideos, state.data.facetimeVideos);
+    state.data = mergeData(savedData, state.data);
     saveLocalData();
     state.remoteReady = true;
     state.remoteStatus = "synced";
@@ -460,7 +516,7 @@ async function saveRemoteData() {
   }
 }
 
-async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) {
+async function loadRemoteData({ mergeLocal = false, renderAfter = false, includeMedia = false } = {}) {
   state.remoteStatus = "checking";
   updateSyncIndicator();
   const previousFacetimeVideoId = getVisibleFacetimeVideoId();
@@ -468,7 +524,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
   const previousDesktopPicturesSignature = getDesktopPicturesSignature();
 
   try {
-    const response = await fetch(API_STATE_URL, {
+    const response = await fetch(getRemoteStateUrl({ includeMedia }), {
       headers: {
         Accept: "application/json",
       },
@@ -479,7 +535,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
 
     const payload = await response.json();
     const remoteData = normalizeData(payload.data);
-    state.data = mergeLocal ? mergeData(remoteData, state.data) : remoteData;
+    state.data = mergeData(remoteData, state.data);
     state.remoteReady = true;
     state.remoteStatus = "synced";
     state.remoteError = "";
@@ -539,25 +595,47 @@ function updateSyncIndicator() {
 function mergeData(remoteData, localData) {
   const remote = normalizeData(remoteData);
   const local = normalizeData(localData);
+  const shared = mergeSharedNoteState(remote, local);
 
   return {
     items: areDefaultItems(remote.items) ? local.items : remote.items,
     completions: mergeCompletionSets(local.completions, remote.completions),
     notes: mergeNestedObjects(local.notes, remote.notes),
-    sharedNotes: {
-      ...local.sharedNotes,
-      ...remote.sharedNotes,
-    },
-    sharedNoteMeta: {
-      ...local.sharedNoteMeta,
-      ...remote.sharedNoteMeta,
-    },
+    sharedNotes: shared.notes,
+    sharedNoteMeta: shared.meta,
     wallpaper: remote.wallpaper || local.wallpaper || "",
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(remote.iconPositions, local.iconPositions),
     desktopPictures: mergeDesktopPictures(remote.desktopPictures, local.desktopPictures),
     facetimeVideos: mergeFacetimeVideos(remote.facetimeVideos, local.facetimeVideos),
   };
+}
+
+function mergeSharedNoteState(remote, local) {
+  const notes = {};
+  const meta = {};
+  const dateKeys = new Set([
+    ...Object.keys(local.sharedNotes || {}),
+    ...Object.keys(remote.sharedNotes || {}),
+    ...Object.keys(local.sharedNoteMeta || {}),
+    ...Object.keys(remote.sharedNoteMeta || {}),
+  ]);
+
+  dateKeys.forEach((dateKey) => {
+    const localMeta = local.sharedNoteMeta?.[dateKey] || {};
+    const remoteMeta = remote.sharedNoteMeta?.[dateKey] || {};
+    const localTime = Date.parse(localMeta.editedAt || "");
+    const remoteTime = Date.parse(remoteMeta.editedAt || "");
+    const useRemote =
+      Object.hasOwn(remote.sharedNotes || {}, dateKey) &&
+      (!Object.hasOwn(local.sharedNotes || {}, dateKey) ||
+        (Number.isFinite(remoteTime) && (!Number.isFinite(localTime) || remoteTime >= localTime)));
+
+    notes[dateKey] = useRemote ? remote.sharedNotes[dateKey] : local.sharedNotes?.[dateKey] || "";
+    meta[dateKey] = useRemote ? remoteMeta : localMeta;
+  });
+
+  return { notes, meta };
 }
 
 function hasIconPositions(iconPositions) {
@@ -575,8 +653,31 @@ function hasFacetimeVideo(video) {
   return Boolean(video?.data);
 }
 
+function hasFacetimeVideoRecord(video) {
+  return Boolean(video?.data || getFacetimeVideoId(video));
+}
+
 function hasFacetimeVideos(videos) {
   return Object.values(videos || {}).some(hasFacetimeVideo);
+}
+
+function hasFacetimeVideoRecords(videos) {
+  return Object.values(videos || {}).some(hasFacetimeVideoRecord);
+}
+
+function getFacetimeVideoMetadata(video) {
+  const normalized = normalizeFacetimeVideo(video);
+  if (!hasFacetimeVideoRecord(normalized)) return {};
+  const { data, ...metadata } = normalized;
+  return metadata;
+}
+
+function getFacetimeVideoMetadataMap(videos) {
+  return Object.fromEntries(
+    Object.entries(normalizeFacetimeVideos(videos))
+      .map(([userId, video]) => [userId, getFacetimeVideoMetadata(video)])
+      .filter(([, video]) => hasFacetimeVideoRecord(video)),
+  );
 }
 
 function hasDesktopPictures(pictures) {
@@ -607,14 +708,31 @@ function mergeFacetimeVideos(remoteVideos, localVideos) {
   const merged = { ...(remoteVideos || {}) };
 
   Object.entries(localVideos || {}).forEach(([userId, localVideo]) => {
-    const remoteVideo = merged[userId];
-
-    if (!hasFacetimeVideo(remoteVideo) || isNewerFacetimeVideo(localVideo, remoteVideo)) {
-      merged[userId] = localVideo;
-    }
+    merged[userId] = mergeFacetimeVideoRecord(merged[userId], localVideo);
   });
 
   return merged;
+}
+
+function mergeFacetimeVideoRecord(current, incoming) {
+  const currentVideo = normalizeFacetimeVideo(current);
+  const incomingVideo = normalizeFacetimeVideo(incoming);
+
+  if (!hasFacetimeVideoRecord(currentVideo)) return incomingVideo;
+  if (!hasFacetimeVideoRecord(incomingVideo)) return currentVideo;
+
+  const currentId = getFacetimeVideoId(currentVideo);
+  const incomingId = getFacetimeVideoId(incomingVideo);
+
+  if (currentId && currentId === incomingId) {
+    return {
+      ...currentVideo,
+      ...incomingVideo,
+      data: incomingVideo.data || currentVideo.data || "",
+    };
+  }
+
+  return isNewerFacetimeVideo(incomingVideo, currentVideo) ? incomingVideo : currentVideo;
 }
 
 function isNewerFacetimeVideo(candidate, current) {
@@ -734,8 +852,8 @@ function getFacetimeVideoForUser(userId) {
 }
 
 function getFacetimeVideoId(video) {
-  if (!hasFacetimeVideo(video)) return "";
-  return video.videoId || video.uploadedAt || getFacetimeVideoFallbackId(video.data, video.uploadedAt);
+  if (!video || typeof video !== "object") return "";
+  return video.videoId || video.uploadedAt || (video.data ? getFacetimeVideoFallbackId(video.data, video.uploadedAt) : "");
 }
 
 function getVisibleFacetimeOwner() {
@@ -772,6 +890,65 @@ function markFacetimePartnerVideoRead(userId = state.currentUserId) {
   state.facetimeVideoReads[userId] ||= {};
   state.facetimeVideoReads[userId][status.partner.id] = status.videoId;
   saveFacetimeVideoReads();
+}
+
+async function loadVisibleFacetimeVideo({ renderAfter = false } = {}) {
+  const owner = getVisibleFacetimeOwner();
+  if (!owner) return null;
+  return loadFacetimeVideoForUser(owner.id, { renderAfter });
+}
+
+async function loadFacetimeVideoForUser(userId, { renderAfter = false } = {}) {
+  if (!userId) return null;
+
+  const currentVideo = getFacetimeVideoForUser(userId);
+  if (hasFacetimeVideo(currentVideo)) return currentVideo;
+  if (facetimeVideoLoads[userId]) return facetimeVideoLoads[userId];
+
+  state.facetimePlaybackStatus = "Loading video...";
+  setFacetimePlaybackStatus("Loading video...");
+
+  facetimeVideoLoads[userId] = fetch(getFacetimeVideoApiUrl(userId), {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Video load failed: ${response.status}`);
+      const payload = await response.json();
+      const loadedVideo = normalizeFacetimeVideo(payload.video, userId);
+      if (!hasFacetimeVideoRecord(loadedVideo)) return null;
+
+      state.data.facetimeVideos ||= {};
+      state.data.facetimeVideos[userId] = mergeFacetimeVideoRecord(state.data.facetimeVideos[userId], loadedVideo);
+      state.remoteReady = true;
+      state.remoteStatus = "synced";
+      state.remoteError = "";
+      saveLocalData();
+
+      if (renderAfter && state.facetimeWindowOpen && getVisibleFacetimeOwner()?.id === userId) {
+        state.facetimePlaybackStatus = "";
+        render();
+      } else {
+        updateSyncIndicator();
+      }
+
+      return state.data.facetimeVideos[userId];
+    })
+    .catch((error) => {
+      state.remoteReady = false;
+      state.remoteStatus = "local";
+      state.remoteError = error.message || "Video load failed.";
+      setFacetimePlaybackStatus("Could not load video from the cloud.");
+      updateSyncIndicator();
+      return null;
+    })
+    .finally(() => {
+      delete facetimeVideoLoads[userId];
+    });
+
+  return facetimeVideoLoads[userId];
 }
 
 function renderFacetimeBadge() {
@@ -1514,10 +1691,11 @@ function renderFacetimeWindow() {
   const owner = getVisibleFacetimeOwner();
   const video = getVisibleFacetimeVideo();
   const hasVideo = hasFacetimeVideo(video);
+  const hasVideoRecord = hasFacetimeVideoRecord(video);
   const ownerName = owner?.name || "Daily Dozen";
   const partnerVideoLabel = `Video from ${ownerName}`;
   const mediaPreserveKey = hasVideo ? getFacetimeMediaPreserveKey() : "";
-  const waitingForVideo = !hasVideo && !state.remoteReady && state.remoteStatus === "checking";
+  const waitingForVideo = (!hasVideo && hasVideoRecord) || (!hasVideo && !state.remoteReady && state.remoteStatus === "checking");
   const emptyVideoMessage =
     viewingMine && state.facetimeUploadStatus
       ? state.facetimeUploadStatus
@@ -1760,7 +1938,7 @@ function bindFacetimeEvents() {
     state.facetimePlaybackStatus = "";
     markFacetimePartnerVideoRead();
     render();
-    loadRemoteData({ renderAfter: true });
+    loadRemoteData({ renderAfter: true }).then(() => loadVisibleFacetimeVideo({ renderAfter: true }));
   });
 
   ["dragenter", "dragover"].forEach((eventName) => {
@@ -1798,7 +1976,7 @@ function bindFacetimeEvents() {
       state.facetimePlaybackStatus = "";
       if (state.facetimeMode === "shared") markFacetimePartnerVideoRead();
       render();
-      if (state.facetimeMode === "shared") loadRemoteData({ renderAfter: true });
+      loadVisibleFacetimeVideo({ renderAfter: true });
     });
   });
 
@@ -1984,9 +2162,9 @@ function setFacetimeVideoFromFile(file) {
     saveLocalData();
     render();
 
-    await saveRemoteData();
+    await saveRemoteData({ includeFacetimeVideos: true, facetimeUserId: user.id });
     state.facetimeUploadStatus = state.remoteReady ? "Video saved." : "Video saved here; sync will retry.";
-    if (!state.remoteReady) scheduleRemoteSave();
+    if (!state.remoteReady) scheduleRemoteSave({ includeFacetimeVideos: true, facetimeUserId: user.id });
     render();
   });
 
@@ -2445,8 +2623,8 @@ async function addDesktopPictureFromFile(file) {
   saveLocalData();
   render();
 
-  await saveRemoteData();
-  if (!state.remoteReady) scheduleRemoteSave();
+  await saveRemoteData({ includeDesktopPictures: true });
+  if (!state.remoteReady) scheduleRemoteSave({ includeDesktopPictures: true });
   if (getDesktopPicture(id)) render();
 }
 

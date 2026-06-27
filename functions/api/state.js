@@ -1,5 +1,6 @@
 const STORAGE_KEY = "state:v1";
 const FACETIME_VIDEO_KEY_PREFIX = "facetime-video:v1:";
+const FACETIME_VIDEO_META_KEY_PREFIX = "facetime-video-meta:v1:";
 const DESKTOP_PICTURE_KEY_PREFIX = "desktop-picture:v1:";
 
 const DEFAULT_ITEMS = [
@@ -30,11 +31,20 @@ const USER_NAMES = {
   wife: "Claudie D.",
 };
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ request, env }) {
   const store = getStore(env);
   if (!store) return json({ error: "Daily Dozen KV binding is missing." }, 500);
+  const url = new URL(request.url);
 
-  const data = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"));
+  const requestedVideoUserId = url.searchParams.get("facetimeVideo");
+  if (requestedVideoUserId) {
+    if (!USER_IDS.includes(requestedVideoUserId)) return json({ error: "Unknown FaceTime user." }, 404);
+    const video = await getStoredFacetimeVideo(store, requestedVideoUserId);
+    return json({ video });
+  }
+
+  const includeMedia = url.searchParams.get("media") !== "lite";
+  const data = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia });
   return json({ data });
 }
 
@@ -45,14 +55,14 @@ export async function onRequestPost({ request, env }) {
   try {
     const payload = await request.json();
     const incomingData = normalizeData(payload.data);
-    const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"));
+    const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia: true });
     const facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos);
     const desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures);
     const data = mergeStoredData(storedData, incomingData, facetimeVideos, desktopPictures);
-    await putDesktopPictures(store, desktopPictures);
-    await putFacetimeVideos(store, facetimeVideos);
+    await putDesktopPictures(store, incomingData.desktopPictures);
+    await putFacetimeVideos(store, incomingData.facetimeVideos);
     await store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data)));
-    return json({ data });
+    return json({ data: getStateDataForResponse(data, { includeMedia: false }) });
   } catch {
     return json({ error: "Could not save Daily Dozen state." }, 400);
   }
@@ -77,11 +87,11 @@ function normalizeData(data) {
   };
 }
 
-async function hydrateStoredData(store, stored) {
+async function hydrateStoredData(store, stored, { includeMedia = true } = {}) {
   const storedPictureMeta = normalizeDesktopPictureMetadataList(stored?.desktopPictures);
   const stateData = normalizeData(stored);
   const storedPictures = await getStoredDesktopPictures(store, storedPictureMeta);
-  const storedVideos = await getStoredFacetimeVideos(store);
+  const storedVideos = includeMedia ? await getStoredFacetimeVideos(store) : await getStoredFacetimeVideoMetadata(store);
 
   return {
     ...stateData,
@@ -96,8 +106,16 @@ function mergeStoredData(
   facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos),
   desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures),
 ) {
+  const shared = mergeSharedNoteState(storedData, incomingData);
+
   return {
-    ...incomingData,
+    items: areDefaultItems(incomingData.items) && !areDefaultItems(storedData.items) ? storedData.items : incomingData.items,
+    completions: mergeCompletionSets(storedData.completions, incomingData.completions),
+    notes: mergeNestedObjects(storedData.notes, incomingData.notes),
+    sharedNotes: shared.notes,
+    sharedNoteMeta: shared.meta,
+    wallpaper: incomingData.wallpaper || storedData.wallpaper || "",
+    wallpaperMode: incomingData.wallpaperMode || storedData.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(storedData.iconPositions, incomingData.iconPositions),
     desktopPictures,
     facetimeVideos,
@@ -108,8 +126,75 @@ function getStateDataForStorage(data) {
   return {
     ...data,
     desktopPictures: getDesktopPictureMetadataList(data.desktopPictures),
-    facetimeVideos: {},
+    facetimeVideos: getFacetimeVideoMetadataMap(data.facetimeVideos),
   };
+}
+
+function getStateDataForResponse(data, { includeMedia = true } = {}) {
+  return {
+    ...data,
+    facetimeVideos: includeMedia ? data.facetimeVideos : getFacetimeVideoMetadataMap(data.facetimeVideos),
+  };
+}
+
+function mergeSharedNoteState(storedData, incomingData) {
+  const notes = {};
+  const meta = {};
+  const dateKeys = new Set([
+    ...Object.keys(storedData.sharedNotes || {}),
+    ...Object.keys(incomingData.sharedNotes || {}),
+    ...Object.keys(storedData.sharedNoteMeta || {}),
+    ...Object.keys(incomingData.sharedNoteMeta || {}),
+  ]);
+
+  dateKeys.forEach((dateKey) => {
+    const storedMeta = storedData.sharedNoteMeta?.[dateKey] || {};
+    const incomingMeta = incomingData.sharedNoteMeta?.[dateKey] || {};
+    const storedTime = Date.parse(storedMeta.editedAt || "");
+    const incomingTime = Date.parse(incomingMeta.editedAt || "");
+    const useIncoming =
+      Object.hasOwn(incomingData.sharedNotes || {}, dateKey) &&
+      (!Object.hasOwn(storedData.sharedNotes || {}, dateKey) ||
+        (Number.isFinite(incomingTime) && (!Number.isFinite(storedTime) || incomingTime >= storedTime)));
+
+    notes[dateKey] = useIncoming ? incomingData.sharedNotes[dateKey] : storedData.sharedNotes?.[dateKey] || "";
+    meta[dateKey] = useIncoming ? incomingMeta : storedMeta;
+  });
+
+  return { notes, meta };
+}
+
+function mergeNestedObjects(base, override) {
+  const merged = { ...(base || {}) };
+
+  Object.entries(override || {}).forEach(([dateKey, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    merged[dateKey] = {
+      ...(merged[dateKey] || {}),
+      ...value,
+    };
+  });
+
+  return merged;
+}
+
+function mergeCompletionSets(base, override) {
+  const merged = mergeNestedObjects(base, override);
+
+  Object.entries(base || {}).forEach(([dateKey, users]) => {
+    Object.entries(users || {}).forEach(([userId, items]) => {
+      const current = new Set(merged[dateKey]?.[userId] || []);
+      (Array.isArray(items) ? items : []).forEach((item) => current.add(item));
+      merged[dateKey] ||= {};
+      merged[dateKey][userId] = [...current].sort((a, b) => a - b);
+    });
+  });
+
+  return merged;
+}
+
+function areDefaultItems(items) {
+  return normalizeItems(items).every((item, index) => item === DEFAULT_ITEMS[index]);
 }
 
 function normalizeItems(items) {
@@ -224,11 +309,11 @@ function normalizeFacetimeVideos(value, legacyVideo) {
       if (!USER_IDS.includes(userId)) return;
 
       const normalized = normalizeFacetimeVideo(video, userId);
-      if (normalized.data) videos[userId] = normalized;
+      if (hasFacetimeVideoRecord(normalized)) videos[userId] = normalized;
     });
   }
 
-  if (!Object.keys(videos).length) {
+  if (!hasFacetimeVideoRecords(videos)) {
     const legacy = normalizeFacetimeVideo(legacyVideo);
     if (legacy.data) {
       const userId = inferFacetimeUploaderId(legacy) || USER_IDS[0];
@@ -247,21 +332,50 @@ function hasFacetimeVideo(video) {
   return Boolean(video?.data);
 }
 
+function hasFacetimeVideoRecord(video) {
+  return Boolean(video?.data || getFacetimeVideoId(video));
+}
+
+function hasFacetimeVideoRecords(videos) {
+  return Object.values(videos || {}).some(hasFacetimeVideoRecord);
+}
+
 async function getStoredFacetimeVideos(store) {
   const entries = await Promise.all(
     USER_IDS.map(async (userId) => {
-      const video = normalizeFacetimeVideo(await store.get(`${FACETIME_VIDEO_KEY_PREFIX}${userId}`, "json"), userId);
+      const video = await getStoredFacetimeVideo(store, userId);
       return [userId, video];
     }),
   );
 
-  return Object.fromEntries(entries.filter(([, video]) => hasFacetimeVideo(video)));
+  return Object.fromEntries(entries.filter(([, video]) => hasFacetimeVideoRecord(video)));
+}
+
+async function getStoredFacetimeVideo(store, userId) {
+  return normalizeFacetimeVideo(await store.get(`${FACETIME_VIDEO_KEY_PREFIX}${userId}`, "json"), userId);
+}
+
+async function getStoredFacetimeVideoMetadata(store) {
+  const entries = await Promise.all(
+    USER_IDS.map(async (userId) => {
+      const storedMeta = normalizeFacetimeVideo(await store.get(`${FACETIME_VIDEO_META_KEY_PREFIX}${userId}`, "json"), userId);
+      if (hasFacetimeVideoRecord(storedMeta)) return [userId, storedMeta];
+
+      const storedVideo = await getStoredFacetimeVideo(store, userId);
+      return [userId, getFacetimeVideoMetadata(storedVideo)];
+    }),
+  );
+
+  return Object.fromEntries(entries.filter(([, video]) => hasFacetimeVideoRecord(video)));
 }
 
 async function putFacetimeVideos(store, videos) {
   await Promise.all(
     Object.entries(normalizeFacetimeVideos(videos)).map(([userId, video]) => {
-      return store.put(`${FACETIME_VIDEO_KEY_PREFIX}${userId}`, JSON.stringify(video));
+      const metadata = getFacetimeVideoMetadata(video);
+      const writes = [store.put(`${FACETIME_VIDEO_META_KEY_PREFIX}${userId}`, JSON.stringify(metadata))];
+      if (hasFacetimeVideo(video)) writes.push(store.put(`${FACETIME_VIDEO_KEY_PREFIX}${userId}`, JSON.stringify(video)));
+      return Promise.all(writes);
     }),
   );
 }
@@ -270,14 +384,31 @@ function mergeFacetimeVideos(storedVideos, incomingVideos) {
   const merged = { ...(storedVideos || {}) };
 
   Object.entries(incomingVideos || {}).forEach(([userId, incomingVideo]) => {
-    const storedVideo = merged[userId];
-
-    if (!hasFacetimeVideo(storedVideo) || isNewerFacetimeVideo(incomingVideo, storedVideo)) {
-      merged[userId] = incomingVideo;
-    }
+    merged[userId] = mergeFacetimeVideoRecord(merged[userId], incomingVideo);
   });
 
   return merged;
+}
+
+function mergeFacetimeVideoRecord(current, incoming) {
+  const currentVideo = normalizeFacetimeVideo(current);
+  const incomingVideo = normalizeFacetimeVideo(incoming);
+
+  if (!hasFacetimeVideoRecord(currentVideo)) return incomingVideo;
+  if (!hasFacetimeVideoRecord(incomingVideo)) return currentVideo;
+
+  const currentId = getFacetimeVideoId(currentVideo);
+  const incomingId = getFacetimeVideoId(incomingVideo);
+
+  if (currentId && currentId === incomingId) {
+    return {
+      ...currentVideo,
+      ...incomingVideo,
+      data: incomingVideo.data || currentVideo.data || "",
+    };
+  }
+
+  return isNewerFacetimeVideo(incomingVideo, currentVideo) ? incomingVideo : currentVideo;
 }
 
 function isNewerFacetimeVideo(candidate, current) {
@@ -298,7 +429,12 @@ function normalizeFacetimeVideo(value, fallbackUserId = "") {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const type = normalizeVideoMimeType(value.type, value.name);
   const data = normalizeVideoDataUrl(value.data, type);
-  if (!data.startsWith("data:video/")) return {};
+  const uploadedAt = normalizeShortText(value.uploadedAt, "", 48);
+  const videoId =
+    normalizeShortText(value.videoId, "", 96) ||
+    uploadedAt ||
+    (data.startsWith("data:video/") ? `${data.length}-${data.slice(-36)}` : "");
+  if (!data.startsWith("data:video/") && !videoId) return {};
   const uploadedUserId = USER_IDS.includes(value.uploadedUserId) ? value.uploadedUserId : fallbackUserId;
 
   return {
@@ -307,10 +443,25 @@ function normalizeFacetimeVideo(value, fallbackUserId = "") {
     type,
     size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
     uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
-    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+    uploadedAt,
     uploadedUserId,
-    videoId: normalizeShortText(value.videoId, "", 96) || normalizeShortText(value.uploadedAt, "", 48) || `${data.length}-${data.slice(-36)}`,
+    videoId,
   };
+}
+
+function getFacetimeVideoMetadata(video) {
+  const normalized = normalizeFacetimeVideo(video);
+  if (!hasFacetimeVideoRecord(normalized)) return {};
+  const { data, ...metadata } = normalized;
+  return metadata;
+}
+
+function getFacetimeVideoMetadataMap(videos) {
+  return Object.fromEntries(
+    Object.entries(normalizeFacetimeVideos(videos))
+      .map(([userId, video]) => [userId, getFacetimeVideoMetadata(video)])
+      .filter(([, video]) => hasFacetimeVideoRecord(video)),
+  );
 }
 
 function inferFacetimeUploaderId(video) {
