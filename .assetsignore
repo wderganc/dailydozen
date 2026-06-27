@@ -1,0 +1,11 @@
+.git/
+.wrangler/
+functions/
+src/
+.DS_Store
+.gitignore
+.assetsignore
+wrangler.toml
+*.log
+.env
+.dev.vars
