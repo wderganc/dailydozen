@@ -759,6 +759,20 @@ h2 {
   content: "";
 }
 
+.mac-window[data-draggable-window]::before {
+  cursor: grab;
+}
+
+.mac-window[data-draggable-window].is-window-dragging {
+  cursor: grabbing;
+  user-select: none;
+  z-index: 40;
+}
+
+.mac-window[data-draggable-window].is-window-dragging::before {
+  cursor: grabbing;
+}
+
 .login-copy,
 .login-panel,
 .app-header,
@@ -1326,6 +1340,7 @@ button:focus {
   justify-items: center;
   padding: 28px 12px 12px;
   text-align: center;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
 }
 
 .kimchi-game-window::after {
@@ -1494,6 +1509,7 @@ button:focus {
   width: min(318px, calc(100% - 24px));
   overflow: hidden;
   padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
 }
 
 .youtube-window::after {
@@ -1501,6 +1517,7 @@ button:focus {
 }
 
 .youtube-frame-shell {
+  position: relative;
   overflow: hidden;
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -1518,13 +1535,110 @@ button:focus {
   border: 0;
 }
 
+.youtube-window.is-opening {
+  z-index: 45;
+}
+
+.ukulele-opening-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border: 2px solid #000000;
+  color: #000000;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(255, 255, 255, 0.62) 0 18%, transparent 19%),
+    repeating-linear-gradient(45deg, #f8f8f8 0 7px, #bcbcbc 7px 14px);
+  box-shadow:
+    inset 3px 3px 0 #ffffff,
+    inset -3px -3px 0 #777777;
+  pointer-events: none;
+  animation: ukulele-cover-clear 2s steps(1, end) var(--uke-animation-delay, 0ms) forwards;
+}
+
+.ukulele-opening-cover span {
+  padding: 2px 6px;
+  border: 2px solid #000000;
+  background: #ffffff;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  font-weight: 700;
+}
+
+.ukulele-launch-effect {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  width: var(--end-width, 300px);
+  height: var(--end-height, 300px);
+  border: 2px solid #000000;
+  background:
+    linear-gradient(#ffffff, #ffffff) center / calc(100% - 54px) 2px no-repeat,
+    repeating-linear-gradient(0deg, #f8f8f8 0 3px, #9c9c9c 3px 6px),
+    #eeeeee;
+  box-shadow:
+    inset 3px 3px 0 #ffffff,
+    inset -3px -3px 0 #777777,
+    4px 4px 0 rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  transform-origin: top left;
+  animation: ukulele-launch-zoom 2s cubic-bezier(0.16, 0.84, 0.24, 1) var(--uke-animation-delay, 0ms) forwards;
+}
+
+.ukulele-launch-effect .icon-ukulele {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 34px;
+  border: 2px solid #000000;
+  box-shadow:
+    inset 3px 3px 0 #ffffff,
+    inset -3px -3px 0 #8a8a8a;
+  transform: scale(1.35);
+}
+
+@keyframes ukulele-launch-zoom {
+  0% {
+    opacity: 0.98;
+    transform: translate(var(--start-x, 0), var(--start-y, 0)) scale(var(--start-scale-x, 0.2), var(--start-scale-y, 0.2));
+  }
+
+  62% {
+    opacity: 1;
+    transform: translate(var(--end-x, 0), var(--end-y, 0)) scale(1);
+  }
+
+  100% {
+    visibility: hidden;
+    opacity: 0;
+    transform: translate(var(--end-x, 0), var(--end-y, 0)) scale(1);
+  }
+}
+
+@keyframes ukulele-cover-clear {
+  0%,
+  99% {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  100% {
+    visibility: hidden;
+    opacity: 0;
+  }
+}
+
 .facetime-window {
   position: absolute;
-  top: 118px;
-  left: clamp(12px, 36vw, 390px);
-  z-index: 15;
-  width: min(360px, calc(100% - 24px));
+  top: max(38px, 7vh);
+  left: 50%;
+  z-index: 25;
+  width: min(760px, calc(100% - 32px));
   padding: 28px 10px 10px;
+  transform: translate(calc(-50% + var(--window-x, 0)), var(--window-y, 0));
 }
 
 .facetime-window::after {
@@ -1537,7 +1651,7 @@ button:focus {
 
 .facetime-window-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 18px;
 }
 
 .facetime-window-header p:last-child,
@@ -1547,20 +1661,72 @@ button:focus {
   font-size: 10px;
 }
 
+.facetime-mode-switch {
+  display: inline-flex;
+  gap: 0;
+  margin-bottom: 8px;
+  border: 2px solid #000000;
+  background: #ffffff;
+  box-shadow: inset 1px 1px 0 #bcbcbc;
+}
+
+.facetime-mode-button {
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 0;
+  border-right: 2px solid #000000;
+  color: #000000;
+  background: #eeeeee;
+  font: inherit;
+  font-weight: 700;
+}
+
+.facetime-mode-button:last-child {
+  border-right: 0;
+}
+
+.facetime-mode-button.is-active {
+  color: #ffffff;
+  background: #000000;
+}
+
 .facetime-video {
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 190px);
   border: 2px solid #000000;
   background: #000000;
   box-shadow:
     inset 2px 2px 0 #777777,
     3px 3px 0 rgba(0, 0, 0, 0.24);
+  object-fit: contain;
+}
+
+.facetime-video-local {
+  transform: scaleX(-1);
+}
+
+.facetime-download-link {
+  display: inline-block;
+  margin-top: 7px;
+  padding: 2px 5px;
+  border: 2px solid #000000;
+  color: #000000;
+  background: #eeeeee;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #8d8d8d;
+  font-weight: 700;
+}
+
+.facetime-download-link:hover,
+.facetime-download-link:focus {
+  color: #ffffff;
+  background: #000000;
 }
 
 .facetime-empty {
   display: grid;
-  min-height: 188px;
+  min-height: min(420px, calc(100vh - 190px));
   place-items: center;
   border: 2px solid #000000;
   background:
@@ -1584,6 +1750,7 @@ button:focus {
   z-index: 14;
   width: min(352px, calc(100% - 24px));
   padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
 }
 
 .seed-window::after {
@@ -1975,6 +2142,14 @@ body.crt-on::after {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ukulele-launch-effect {
+    animation-duration: 1ms;
+  }
+
+  .ukulele-opening-cover {
+    animation: none;
+  }
+
   body.crt-on::after {
     animation: none;
   }
