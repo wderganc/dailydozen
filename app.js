@@ -52,6 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
+const APP_BUILD_LABEL = "Build: 2026-06-27 02:58:54 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
@@ -1103,7 +1104,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
           <span>Edit</span>
           <span>View</span>
           <span>Special</span>
-          <span>Help</span>
+          <span class="menu-help" title="${escapeAttribute(APP_BUILD_LABEL)}" data-build-label="${escapeAttribute(APP_BUILD_LABEL)}">Help</span>
         </div>
         <time>${formatClassicTime(new Date())}</time>
         <span class="system-glyph"></span>

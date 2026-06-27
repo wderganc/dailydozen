@@ -120,6 +120,35 @@ h2 {
   white-space: nowrap;
 }
 
+.menu-help {
+  position: relative;
+}
+
+.menu-help::after {
+  position: absolute;
+  top: 19px;
+  right: 0;
+  z-index: 80;
+  display: none;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 20px));
+  padding: 4px 7px;
+  border: 2px solid #000000;
+  color: #000000;
+  background: #f6f6f6;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.38);
+  content: attr(data-build-label);
+  font-size: 10px;
+  line-height: 1.2;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.menu-help:hover::after,
+.menu-help:focus-visible::after {
+  display: block;
+}
+
 .system-menu time {
   padding: 0 12px;
   white-space: nowrap;
