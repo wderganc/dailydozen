@@ -1,4 +1,5 @@
 const STORAGE_KEY = "state:v1";
+const FACETIME_VIDEO_KEY_PREFIX = "facetime-video:v1:";
 
 const DEFAULT_ITEMS = [
   "Exercise",
@@ -21,6 +22,7 @@ const JSON_HEADERS = {
 };
 
 const DEFAULT_WALLPAPER_MODE = "tile";
+const DESKTOP_PICTURE_LIMIT = 12;
 const USER_IDS = ["you", "wife"];
 const USER_NAMES = {
   you: "Scotty P.",
@@ -45,16 +47,19 @@ async function handleStateRequest(request, env) {
 
   if (request.method === "GET") {
     const stored = await store.get(STORAGE_KEY, "json");
-    return json({ data: normalizeData(stored) });
+    const data = await hydrateStoredData(store, stored);
+    return json({ data });
   }
 
   if (request.method === "POST") {
     try {
       const payload = await request.json();
       const incomingData = normalizeData(payload.data);
-      const storedData = normalizeData(await store.get(STORAGE_KEY, "json"));
-      const data = mergeStoredData(storedData, incomingData);
-      await store.put(STORAGE_KEY, JSON.stringify(data));
+      const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"));
+      const facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos);
+      const data = mergeStoredData(storedData, incomingData, facetimeVideos);
+      await putFacetimeVideos(store, facetimeVideos);
+      await store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data)));
       return json({ data });
     } catch {
       return json({ error: "Could not save Daily Dozen state." }, 400);
@@ -74,14 +79,34 @@ function normalizeData(data) {
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
+    desktopPictures: normalizeDesktopPictures(data?.desktopPictures),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
   };
 }
 
-function mergeStoredData(storedData, incomingData) {
+async function hydrateStoredData(store, stored) {
+  const stateData = normalizeData(stored);
+  const storedVideos = await getStoredFacetimeVideos(store);
+
+  return {
+    ...stateData,
+    facetimeVideos: mergeFacetimeVideos(stateData.facetimeVideos, storedVideos),
+  };
+}
+
+function mergeStoredData(storedData, incomingData, facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos)) {
   return {
     ...incomingData,
-    facetimeVideos: mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos),
+    iconPositions: mergeIconPositions(storedData.iconPositions, incomingData.iconPositions),
+    desktopPictures: mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures),
+    facetimeVideos,
+  };
+}
+
+function getStateDataForStorage(data) {
+  return {
+    ...data,
+    facetimeVideos: {},
   };
 }
 
@@ -95,6 +120,48 @@ function normalizeItems(items) {
 
 function normalizeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeDesktopPictures(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map(normalizeDesktopPicture)
+    .filter((picture) => picture.id && picture.data)
+    .slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function normalizeDesktopPicture(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const data = normalizeWallpaper(value.data);
+  if (!data) return {};
+
+  const id = normalizeShortText(value.id, "", 96) || `${data.length}-${data.slice(-36)}`;
+
+  return {
+    id,
+    data,
+    name: normalizeShortText(value.name, "Picture", 96),
+    type: normalizeShortText(value.type, "image/jpeg", 48),
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+  };
+}
+
+function mergeDesktopPictures(storedPictures, incomingPictures) {
+  const picturesById = new Map();
+
+  normalizeDesktopPictures(storedPictures).forEach((picture) => {
+    picturesById.set(picture.id, picture);
+  });
+
+  normalizeDesktopPictures(incomingPictures).forEach((picture) => {
+    picturesById.set(picture.id, picture);
+  });
+
+  return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
 }
 
 function normalizeFacetimeVideos(value, legacyVideo) {
@@ -128,6 +195,25 @@ function hasFacetimeVideo(video) {
   return Boolean(video?.data);
 }
 
+async function getStoredFacetimeVideos(store) {
+  const entries = await Promise.all(
+    USER_IDS.map(async (userId) => {
+      const video = normalizeFacetimeVideo(await store.get(`${FACETIME_VIDEO_KEY_PREFIX}${userId}`, "json"), userId);
+      return [userId, video];
+    }),
+  );
+
+  return Object.fromEntries(entries.filter(([, video]) => hasFacetimeVideo(video)));
+}
+
+async function putFacetimeVideos(store, videos) {
+  await Promise.all(
+    Object.entries(normalizeFacetimeVideos(videos)).map(([userId, video]) => {
+      return store.put(`${FACETIME_VIDEO_KEY_PREFIX}${userId}`, JSON.stringify(video));
+    }),
+  );
+}
+
 function mergeFacetimeVideos(storedVideos, incomingVideos) {
   const merged = { ...(storedVideos || {}) };
 
@@ -158,7 +244,7 @@ function getFacetimeVideoId(video) {
 
 function normalizeFacetimeVideo(value, fallbackUserId = "") {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const type = normalizeShortText(value.type, "video/mp4", 48);
+  const type = normalizeVideoMimeType(value.type, value.name);
   const data = normalizeVideoDataUrl(value.data, type);
   if (!data.startsWith("data:video/")) return {};
   const uploadedUserId = USER_IDS.includes(value.uploadedUserId) ? value.uploadedUserId : fallbackUserId;
@@ -183,10 +269,28 @@ function inferFacetimeUploaderId(video) {
 
 function normalizeVideoDataUrl(dataUrl, type) {
   if (typeof dataUrl !== "string") return "";
-  if (dataUrl.startsWith("data:video/")) return dataUrl;
-  if (dataUrl.startsWith("data:;base64,")) return `data:${type};base64,${dataUrl.split(",")[1] || ""}`;
-  if (dataUrl.startsWith("data:application/octet-stream;base64,")) return `data:${type};base64,${dataUrl.split(",")[1] || ""}`;
+  const [, payload = ""] = dataUrl.split(",");
+  if (!payload) return "";
+  const mime = normalizeVideoMimeType(type, "");
+
+  if (
+    dataUrl.startsWith("data:video/") ||
+    dataUrl.startsWith("data:;base64,") ||
+    dataUrl.startsWith("data:application/octet-stream;base64,")
+  ) {
+    return `data:${mime};base64,${payload}`;
+  }
+
   return "";
+}
+
+function normalizeVideoMimeType(type, name = "") {
+  const cleanType = normalizeShortText(type, "", 48).toLowerCase();
+  if (/\.webm$/i.test(name)) return "video/webm";
+  if (/\.ogv$/i.test(name)) return "video/ogg";
+  if (/\.(mp4|m4v|mov)$/i.test(name)) return "video/mp4";
+  if (cleanType === "video/quicktime" || cleanType === "video/x-m4v") return "video/mp4";
+  return cleanType.startsWith("video/") ? cleanType : "video/mp4";
 }
 
 function normalizeShortText(value, fallback = "", maxLength = 80) {
@@ -208,6 +312,13 @@ function normalizeIconPositions(value) {
       ])
       .filter(([, position]) => position.x || position.y),
   );
+}
+
+function mergeIconPositions(storedPositions, incomingPositions) {
+  return {
+    ...normalizeIconPositions(storedPositions),
+    ...normalizeIconPositions(incomingPositions),
+  };
 }
 
 function clampIconCoordinate(value) {

@@ -55,6 +55,9 @@ const API_STATE_URL = "/api/state";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
+const DESKTOP_PICTURE_MAX_SIDE = 900;
+const DESKTOP_PICTURE_JPEG_QUALITY = 0.76;
+const DESKTOP_PICTURE_LIMIT = 12;
 const DEFAULT_WALLPAPER_MODE = "tile";
 const KIMCHI_QUEST_MAX_BITES = 5;
 const MONKEY_VIDEO_URL = "assets/proboscis-monkey.mp4";
@@ -83,6 +86,7 @@ let remoteSaveTimer;
 let remoteSyncTimer;
 let facetimeSharedVideoUrl = "";
 let facetimeSharedVideoData = "";
+let facetimeSharedVideoKey = "";
 
 const state = {
   currentUserId: sessionStorage.getItem(SESSION_KEY),
@@ -104,6 +108,7 @@ const state = {
   ukuleleWindowOpen: false,
   ukuleleVideoIndex: 0,
   seedWindow: "",
+  pictureWindowId: "",
   facetimeWindowOpen: false,
   facetimeUploadStatus: "",
   facetimeMode: "shared",
@@ -204,6 +209,7 @@ function getDefaultData() {
     wallpaper: "",
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
     iconPositions: {},
+    desktopPictures: [],
     facetimeVideos: {},
   };
 }
@@ -224,6 +230,7 @@ function loadData() {
       wallpaper: normalizeWallpaper(parsed.wallpaper),
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
       iconPositions: normalizeIconPositions(parsed.iconPositions || loadIconPositions()),
+      desktopPictures: normalizeDesktopPictures(parsed.desktopPictures),
       facetimeVideos: normalizeFacetimeVideos(parsed.facetimeVideos, parsed.facetimeVideo),
     };
   } catch {
@@ -241,7 +248,36 @@ function normalizeData(data) {
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
+    desktopPictures: normalizeDesktopPictures(data?.desktopPictures),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
+  };
+}
+
+function normalizeDesktopPictures(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map(normalizeDesktopPicture)
+    .filter((picture) => picture.id && picture.data)
+    .slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function normalizeDesktopPicture(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const data = normalizeWallpaper(value.data);
+  if (!data) return {};
+
+  const id = normalizeShortText(value.id, "", 96) || `${data.length}-${data.slice(-36)}`;
+
+  return {
+    id,
+    data,
+    name: normalizeShortText(value.name, "Picture", 96),
+    type: normalizeShortText(value.type, "image/jpeg", 48),
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
   };
 }
 
@@ -274,7 +310,7 @@ function normalizeFacetimeVideos(value, legacyVideo) {
 
 function normalizeFacetimeVideo(value, fallbackUserId = "") {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const type = normalizeShortText(value.type, "video/mp4", 48);
+  const type = normalizeVideoMimeType(value.type, value.name);
   const rawData = typeof value.data === "string" ? value.data : "";
   const data = normalizeVideoDataUrl(rawData, type);
   if (!data.startsWith("data:video/")) return {};
@@ -346,7 +382,7 @@ function saveLocalData() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
   } catch {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.data, wallpaper: "", facetimeVideo: {}, facetimeVideos: {} }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.data, wallpaper: "", desktopPictures: [], facetimeVideo: {}, facetimeVideos: {} }));
     } catch {}
   }
 }
@@ -388,6 +424,8 @@ async function saveRemoteData() {
         const currentData = normalizeData(currentPayload.data);
         dataToSave = {
           ...state.data,
+          iconPositions: mergeIconPositions(currentData.iconPositions, state.data.iconPositions),
+          desktopPictures: mergeDesktopPictures(currentData.desktopPictures, state.data.desktopPictures),
           facetimeVideos: mergeFacetimeVideos(currentData.facetimeVideos, state.data.facetimeVideos),
         };
         state.data = dataToSave;
@@ -421,6 +459,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
   updateSyncIndicator();
   const previousFacetimeVideoId = getVisibleFacetimeVideoId();
   const previousPartnerFacetimeVideoId = getFacetimeUnreadStatus().videoId;
+  const previousDesktopPicturesSignature = getDesktopPicturesSignature();
 
   try {
     const response = await fetch(API_STATE_URL, {
@@ -446,6 +485,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
 
     const facetimeVideoChanged = previousFacetimeVideoId !== getVisibleFacetimeVideoId();
     const partnerFacetimeVideoChanged = previousPartnerFacetimeVideoId !== getFacetimeUnreadStatus().videoId;
+    const desktopPicturesChanged = previousDesktopPicturesSignature !== getDesktopPicturesSignature();
     if (facetimeVideoChanged) state.facetimePlaybackStatus = "";
     if (partnerFacetimeVideoChanged && state.facetimeWindowOpen && state.facetimeMode === "shared") {
       markFacetimePartnerVideoRead();
@@ -454,9 +494,10 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
     if (
       renderAfter &&
       !isTextEditing() &&
-      !state.monkeyWindowOpen &&
-      !state.ukuleleWindowOpen &&
-      (!state.facetimeWindowOpen || facetimeVideoChanged || partnerFacetimeVideoChanged)
+      (desktopPicturesChanged ||
+        (!state.monkeyWindowOpen &&
+          !state.ukuleleWindowOpen &&
+          (!state.facetimeWindowOpen || facetimeVideoChanged || partnerFacetimeVideoChanged)))
     ) {
       render();
     } else {
@@ -507,7 +548,8 @@ function mergeData(remoteData, localData) {
     },
     wallpaper: remote.wallpaper || local.wallpaper || "",
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
-    iconPositions: hasIconPositions(remote.iconPositions) ? remote.iconPositions : local.iconPositions,
+    iconPositions: mergeIconPositions(remote.iconPositions, local.iconPositions),
+    desktopPictures: mergeDesktopPictures(remote.desktopPictures, local.desktopPictures),
     facetimeVideos: mergeFacetimeVideos(remote.facetimeVideos, local.facetimeVideos),
   };
 }
@@ -516,12 +558,43 @@ function hasIconPositions(iconPositions) {
   return Object.keys(iconPositions || {}).length > 0;
 }
 
+function mergeIconPositions(remotePositions, localPositions) {
+  return {
+    ...normalizeIconPositions(remotePositions),
+    ...normalizeIconPositions(localPositions),
+  };
+}
+
 function hasFacetimeVideo(video) {
   return Boolean(video?.data);
 }
 
 function hasFacetimeVideos(videos) {
   return Object.values(videos || {}).some(hasFacetimeVideo);
+}
+
+function hasDesktopPictures(pictures) {
+  return normalizeDesktopPictures(pictures).length > 0;
+}
+
+function mergeDesktopPictures(remotePictures, localPictures) {
+  const picturesById = new Map();
+
+  normalizeDesktopPictures(remotePictures).forEach((picture) => {
+    picturesById.set(picture.id, picture);
+  });
+
+  normalizeDesktopPictures(localPictures).forEach((picture) => {
+    picturesById.set(picture.id, picture);
+  });
+
+  return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function getDesktopPicturesSignature() {
+  return normalizeDesktopPictures(state.data.desktopPictures)
+    .map((picture) => `${picture.id}:${picture.uploadedAt}`)
+    .join("|");
 }
 
 function mergeFacetimeVideos(remoteVideos, localVideos) {
@@ -588,6 +661,7 @@ function hasLocalActivity(data) {
     Object.keys(data.sharedNotes || {}).length > 0 ||
     Object.keys(data.sharedNoteMeta || {}).length > 0 ||
     hasIconPositions(data.iconPositions) ||
+    hasDesktopPictures(data.desktopPictures) ||
     hasFacetimeVideos(data.facetimeVideos) ||
     Boolean(data.wallpaper) ||
     data.wallpaperMode === "fill"
@@ -994,6 +1068,31 @@ function renderMediaWindowSlot(id, preservedMediaIds, html) {
   return html;
 }
 
+function getDesktopPictureIconId(pictureId) {
+  return `desktop-picture-${pictureId}`;
+}
+
+function getDesktopPictureWindowId(pictureId) {
+  return `picture-window-${pictureId}`;
+}
+
+function getDesktopPicture(pictureId) {
+  return normalizeDesktopPictures(state.data.desktopPictures).find((picture) => picture.id === pictureId) || null;
+}
+
+function renderDesktopPictureIcons() {
+  return normalizeDesktopPictures(state.data.desktopPictures)
+    .map(
+      (picture) => `
+        <button class="desktop-icon desktop-picture-icon" type="button" data-desktop-icon="${escapeAttribute(getDesktopPictureIconId(picture.id))}" data-open-picture="${escapeAttribute(picture.id)}" aria-label="Open ${escapeAttribute(picture.name)}" style="${getDesktopIconStyle(getDesktopPictureIconId(picture.id))}">
+          <span class="icon-picture" style="--picture-thumb: url(${escapeAttribute(picture.data)});"></span>
+          <strong>${escapeHtml(picture.name)}</strong>
+        </button>
+      `,
+    )
+    .join("");
+}
+
 function renderMacShell(content, preservedMediaIds = new Set()) {
   return `
     <div class="mac-shell">
@@ -1064,6 +1163,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
             <span class="icon-folder icon-folder-green"></span>
             <strong>Genevieve's Seed Collection</strong>
           </button>
+          ${renderDesktopPictureIcons()}
           <div class="desktop-icon" data-desktop-icon="trash" style="${getDesktopIconStyle("trash")}">
             <span class="icon-trash"></span>
             <strong>Trash</strong>
@@ -1075,6 +1175,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
         ${state.monkeyWindowOpen ? renderMediaWindowSlot("monkey-see-genevieve-do", preservedMediaIds, renderMonkeyWindow()) : ""}
         ${state.ukuleleWindowOpen ? renderMediaWindowSlot("ulaylee", preservedMediaIds, renderUkuleleWindow()) : ""}
         ${state.seedWindow ? renderSeedWindow(state.seedWindow) : ""}
+        ${state.pictureWindowId ? renderDesktopPictureWindow(state.pictureWindowId) : ""}
         ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
       </div>
     </div>
@@ -1382,6 +1483,26 @@ function renderUkuleleWindow() {
   `;
 }
 
+function renderDesktopPictureWindow(pictureId) {
+  const picture = getDesktopPicture(pictureId);
+  if (!picture) return "";
+
+  const windowId = getDesktopPictureWindowId(picture.id);
+
+  return `
+    <section class="picture-window mac-window" data-window-title="${escapeAttribute(picture.name)}" data-draggable-window="${escapeAttribute(windowId)}" style="${getWindowStyle(windowId)}" role="dialog" aria-labelledby="picture-window-title">
+      <button class="window-close" type="button" data-close-picture-window aria-label="Close ${escapeAttribute(picture.name)}" title="Close">×</button>
+      <figure class="picture-frame">
+        <img src="${escapeAttribute(picture.data)}" alt="${escapeAttribute(picture.name)}" />
+        <figcaption>
+          <strong id="picture-window-title">${escapeHtml(picture.name)}</strong>
+          <span>${picture.uploadedAt ? escapeHtml(formatMessageTime(picture.uploadedAt)) : "Shared picture"}${picture.uploadedBy ? ` · ${escapeHtml(picture.uploadedBy)}` : ""}</span>
+        </figcaption>
+      </figure>
+    </section>
+  `;
+}
+
 function renderFacetimeWindow() {
   const viewingMine = state.facetimeMode === "mine";
   const owner = getVisibleFacetimeOwner();
@@ -1425,7 +1546,7 @@ function renderFacetimeWindow() {
       ${
         hasVideo
           ? `
-            <video class="facetime-video" controls autoplay playsinline data-facetime-video data-facetime-owner="${escapeAttribute(owner?.id || "")}"></video>
+            <video class="facetime-video" controls autoplay playsinline preload="auto" data-facetime-video data-facetime-owner="${escapeAttribute(owner?.id || "")}" data-facetime-video-id="${escapeAttribute(getFacetimeVideoId(video))}"></video>
             <p class="facetime-meta">${escapeHtml(video.name)}${video.size ? ` - ${formatFileSize(video.size)}` : ""}${video.uploadedAt ? ` - ${formatMessageTime(video.uploadedAt)}` : ""}</p>
             <a class="facetime-download-link" data-facetime-download download="${escapeAttribute(video.name)}">Download video</a>
           `
@@ -1547,6 +1668,7 @@ function bindEvents() {
   });
 
   bindDesktopBackgroundEvents();
+  bindDesktopPictureEvents();
   bindDesktopIconDragging();
   bindAppWindowDragging();
   bindKimchiQuestEvents();
@@ -1632,6 +1754,7 @@ function bindFacetimeEvents() {
     state.facetimePlaybackStatus = "";
     markFacetimePartnerVideoRead();
     render();
+    loadRemoteData({ renderAfter: true });
   });
 
   ["dragenter", "dragover"].forEach((eventName) => {
@@ -1650,7 +1773,7 @@ function bindFacetimeEvents() {
   icon.addEventListener("drop", (event) => {
     event.preventDefault();
     icon.classList.remove("is-drag-over");
-    const file = event.dataTransfer?.files?.[0];
+    const file = getFirstVideoFile(event.dataTransfer?.files);
     if (file) setFacetimeVideoFromFile(file);
   });
 
@@ -1669,6 +1792,7 @@ function bindFacetimeEvents() {
       state.facetimePlaybackStatus = "";
       if (state.facetimeMode === "shared") markFacetimePartnerVideoRead();
       render();
+      if (state.facetimeMode === "shared") loadRemoteData({ renderAfter: true });
     });
   });
 
@@ -1682,39 +1806,97 @@ function attachFacetimeVideo() {
   if (!videoElement || !hasFacetimeVideo(video)) return;
 
   const url = getFacetimeSharedVideoUrl(video);
+  const videoId = getFacetimeVideoId(video);
 
-  if (videoElement.src !== url) {
+  videoElement.onloadedmetadata = () => {
+    videoElement.dataset.facetimeLoading = "";
+    setFacetimePlaybackStatus("Video ready.");
+  };
+
+  videoElement.oncanplay = () => {
+    videoElement.dataset.facetimeLoading = "";
+    playFacetimeVideo(videoElement);
+  };
+
+  videoElement.onplay = () => {
+    videoElement.dataset.facetimeUserPaused = "";
+  };
+
+  videoElement.onpause = () => {
+    if (videoElement.dataset.facetimeLoading === "true") return;
+    if (!videoElement.ended) videoElement.dataset.facetimeUserPaused = "true";
+  };
+
+  videoElement.onwaiting = () => {
+    setFacetimePlaybackStatus("Loading video...");
+  };
+
+  videoElement.onerror = () => {
+    videoElement.dataset.facetimeLoading = "";
+    retryFacetimeVideoSource(videoElement, video);
+  };
+
+  if (videoElement.dataset.facetimeSourceId !== videoId || videoElement.src !== url) {
+    videoElement.dataset.facetimeSourceId = videoId;
+    videoElement.dataset.facetimeFallbackTried = "";
+    videoElement.dataset.facetimeUserPaused = "";
+    videoElement.dataset.facetimeLoading = "true";
     videoElement.src = url;
     videoElement.load();
+    setFacetimePlaybackStatus("Loading video...");
   }
 
-  videoElement.addEventListener("error", () => {
-    setFacetimePlaybackStatus("This video format could not play here. Try MP4/H.264, or download it.");
-  });
-
-  videoElement.muted = false;
-  videoElement.play().catch(() => {
-    videoElement.muted = true;
-    videoElement.play().catch(() => {
-      setFacetimePlaybackStatus("Press play to start this video.");
-    });
-  });
+  playFacetimeVideo(videoElement);
 
   if (downloadLink) {
-    downloadLink.href = url;
+    downloadLink.href = video.data;
     downloadLink.download = video.name || "shared-video";
   }
 }
 
+function playFacetimeVideo(videoElement) {
+  if (!videoElement || videoElement.dataset.facetimeUserPaused === "true") return;
+
+  videoElement.muted = false;
+  videoElement.play().then(() => {
+    setFacetimePlaybackStatus("Playing.");
+  }).catch(() => {
+    videoElement.muted = true;
+    videoElement.play().then(() => {
+      setFacetimePlaybackStatus("Playing muted.");
+    }).catch(() => {
+      setFacetimePlaybackStatus("Press play to start this video.");
+    });
+  });
+}
+
+function retryFacetimeVideoSource(videoElement, video) {
+  if (videoElement.dataset.facetimeFallbackTried !== "true" && video.data && videoElement.src !== video.data) {
+    videoElement.dataset.facetimeFallbackTried = "true";
+    videoElement.dataset.facetimeUserPaused = "";
+    videoElement.dataset.facetimeLoading = "true";
+    videoElement.src = video.data;
+    videoElement.load();
+    setFacetimePlaybackStatus("Retrying video...");
+    playFacetimeVideo(videoElement);
+    return;
+  }
+
+  setFacetimePlaybackStatus("This video could not play here. MP4/H.264 works best.");
+}
+
 function getFacetimeSharedVideoUrl(video) {
-  if (facetimeSharedVideoUrl && facetimeSharedVideoData === video.data) {
+  const videoKey = getFacetimeVideoId(video);
+
+  if (facetimeSharedVideoUrl && facetimeSharedVideoKey === videoKey && facetimeSharedVideoData === video.data) {
     return facetimeSharedVideoUrl;
   }
 
-  if (facetimeSharedVideoUrl) {
+  if (facetimeSharedVideoUrl?.startsWith("blob:")) {
     URL.revokeObjectURL(facetimeSharedVideoUrl);
   }
 
+  facetimeSharedVideoKey = videoKey;
   facetimeSharedVideoData = video.data;
 
   try {
@@ -1768,15 +1950,22 @@ function setFacetimeVideoFromFile(file) {
   state.facetimeUploadStatus = "Preparing video...";
   render();
 
-  reader.addEventListener("load", () => {
+  reader.addEventListener("load", async () => {
     const user = getUser();
     if (!user) return;
 
     const type = getVideoMimeType(file);
+    const data = normalizeVideoDataUrl(String(reader.result || ""), type);
+    if (!data.startsWith("data:video/")) {
+      state.facetimeUploadStatus = "That video could not be prepared.";
+      render();
+      return;
+    }
+
     const uploadedAt = new Date().toISOString();
     state.data.facetimeVideos ||= {};
     state.data.facetimeVideos[user.id] = {
-      data: normalizeVideoDataUrl(String(reader.result || ""), type),
+      data,
       name: file.name || "Shared video",
       type,
       size: file.size,
@@ -1785,8 +1974,13 @@ function setFacetimeVideoFromFile(file) {
       uploadedAt,
       videoId: createMessageId(user.id),
     };
-    state.facetimeUploadStatus = `Uploaded ${file.name || "video"}.`;
-    saveData({ immediate: true });
+    state.facetimeUploadStatus = "Saving video...";
+    saveLocalData();
+    render();
+
+    await saveRemoteData();
+    state.facetimeUploadStatus = state.remoteReady ? "Video saved." : "Video saved here; sync will retry.";
+    if (!state.remoteReady) scheduleRemoteSave();
     render();
   });
 
@@ -1798,26 +1992,58 @@ function setFacetimeVideoFromFile(file) {
   reader.readAsDataURL(file);
 }
 
+function getFirstVideoFile(files) {
+  return Array.from(files || []).find(isVideoFile) || null;
+}
+
 function isVideoFile(file) {
-  return file.type.startsWith("video/") || /\.(mp4|m4v|mov|webm|ogv)$/i.test(file.name || "");
+  return Boolean(file?.type?.startsWith("video/")) || /\.(mp4|m4v|mov|webm|ogv)$/i.test(file?.name || "");
 }
 
 function getVideoMimeType(file) {
-  if (file.type.startsWith("video/")) return file.type;
-
   const name = file.name || "";
-  if (/\.mov$/i.test(name)) return "video/quicktime";
-  if (/\.(mp4|m4v)$/i.test(name)) return "video/mp4";
   if (/\.webm$/i.test(name)) return "video/webm";
   if (/\.ogv$/i.test(name)) return "video/ogg";
+  if (/\.(mp4|m4v)$/i.test(name)) return "video/mp4";
+  if (/\.mov$/i.test(name)) return getPlayableVideoMimeType(file.type, "video/mp4");
+  if (file.type.startsWith("video/")) return normalizeVideoMimeType(file.type, name);
   return "video/mp4";
 }
 
+function getPlayableVideoMimeType(preferredType, fallbackType = "video/mp4") {
+  const preferred = normalizeVideoMimeType(preferredType, "");
+  return canBrowserPlayVideoType(preferred) ? preferred : fallbackType;
+}
+
+function canBrowserPlayVideoType(type) {
+  if (!type || !type.startsWith("video/")) return false;
+  return Boolean(document.createElement("video").canPlayType(type));
+}
+
+function normalizeVideoMimeType(type, name = "") {
+  const cleanType = normalizeShortText(type, "", 48).toLowerCase();
+  if (/\.webm$/i.test(name)) return "video/webm";
+  if (/\.ogv$/i.test(name)) return "video/ogg";
+  if (/\.(mp4|m4v|mov)$/i.test(name)) return "video/mp4";
+  if (cleanType === "video/quicktime" || cleanType === "video/x-m4v") return "video/mp4";
+  return cleanType.startsWith("video/") ? cleanType : "video/mp4";
+}
+
 function normalizeVideoDataUrl(dataUrl, type) {
-  if (dataUrl.startsWith("data:video/")) return dataUrl;
-  if (dataUrl.startsWith("data:;base64,")) return `data:${type};base64,${dataUrl.split(",")[1] || ""}`;
-  if (dataUrl.startsWith("data:application/octet-stream;base64,")) return `data:${type};base64,${dataUrl.split(",")[1] || ""}`;
-  return dataUrl;
+  if (typeof dataUrl !== "string") return "";
+  const [, payload = ""] = dataUrl.split(",");
+  if (!payload) return "";
+  const mime = normalizeVideoMimeType(type, "");
+
+  if (
+    dataUrl.startsWith("data:video/") ||
+    dataUrl.startsWith("data:;base64,") ||
+    dataUrl.startsWith("data:application/octet-stream;base64,")
+  ) {
+    return `data:${mime};base64,${payload}`;
+  }
+
+  return "";
 }
 
 function formatFileSize(bytes) {
@@ -1969,6 +2195,73 @@ function bindDesktopBackgroundEvents() {
   });
 }
 
+function bindDesktopPictureEvents() {
+  const desktop = document.querySelector(".desktop-surface");
+  if (!desktop) return;
+
+  document.querySelectorAll("[data-open-picture]").forEach((icon) => {
+    icon.addEventListener("click", () => {
+      if (icon.dataset.dragMoved === "true") {
+        icon.dataset.dragMoved = "";
+        return;
+      }
+
+      state.pictureWindowId = icon.dataset.openPicture || "";
+      render();
+    });
+  });
+
+  document.querySelector("[data-close-picture-window]")?.addEventListener("click", () => {
+    state.pictureWindowId = "";
+    render();
+  });
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    desktop.addEventListener(eventName, (event) => {
+      if (isSpecialDesktopDropTarget(event.target) || !hasDesktopPictureDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      desktop.classList.add("is-picture-drag-over");
+    });
+  });
+
+  ["dragleave", "dragend"].forEach((eventName) => {
+    desktop.addEventListener(eventName, (event) => {
+      if (eventName === "dragleave" && desktop.contains(event.relatedTarget)) return;
+      desktop.classList.remove("is-picture-drag-over");
+    });
+  });
+
+  desktop.addEventListener("drop", (event) => {
+    if (isSpecialDesktopDropTarget(event.target)) return;
+
+    if (!hasDesktopPictureDrag(event.dataTransfer)) return;
+
+    event.preventDefault();
+    desktop.classList.remove("is-picture-drag-over");
+
+    const file = getFirstImageFile(event.dataTransfer?.files);
+    if (!file) return;
+
+    addDesktopPictureFromFile(file);
+  });
+}
+
+function isSpecialDesktopDropTarget(target) {
+  return Boolean(target?.closest?.("[data-background-drop], [data-facetime-drop]"));
+}
+
+function hasImageFile(files) {
+  return Boolean(getFirstImageFile(files));
+}
+
+function hasDesktopPictureDrag(dataTransfer) {
+  return hasImageFile(dataTransfer?.files) || Array.from(dataTransfer?.types || []).includes("Files");
+}
+
+function getFirstImageFile(files) {
+  return Array.from(files || []).find(isImageFile) || null;
+}
+
 function bindAppWindowDragging() {
   document.querySelectorAll("[data-draggable-window]").forEach((windowElement) => {
     let pointerId = null;
@@ -2108,30 +2401,74 @@ function setIconOffset(icon, x, y) {
   icon.style.setProperty("--icon-y", `${clampIconCoordinate(y)}px`);
 }
 
-function setDesktopBackgroundFromFile(file) {
-  if (!file.type.startsWith("image/")) return;
+async function setDesktopBackgroundFromFile(file) {
+  if (!isImageFile(file)) return;
 
-  const reader = new FileReader();
+  try {
+    const imageData = await resizeImageFile(file, WALLPAPER_MAX_SIDE, WALLPAPER_JPEG_QUALITY);
+    setDesktopBackground(imageData);
+    render();
+  } catch {}
+}
 
-  reader.addEventListener("load", () => {
-    const image = new Image();
+async function addDesktopPictureFromFile(file) {
+  if (!isImageFile(file)) return;
 
-    image.addEventListener("load", () => {
-      const scale = Math.min(1, WALLPAPER_MAX_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const user = getUser();
+  let imageData = "";
 
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      setDesktopBackground(canvas.toDataURL("image/jpeg", WALLPAPER_JPEG_QUALITY));
-      render();
+  try {
+    imageData = await resizeImageFile(file, DESKTOP_PICTURE_MAX_SIDE, DESKTOP_PICTURE_JPEG_QUALITY);
+  } catch {
+    return;
+  }
+
+  const id = createMessageId(user?.id || "picture");
+  const picture = {
+    id,
+    data: imageData,
+    name: normalizeShortText(file.name || "Picture", "Picture", 96),
+    type: "image/jpeg",
+    size: file.size,
+    uploadedBy: user?.name || "Daily Dozen",
+    uploadedAt: new Date().toISOString(),
+  };
+
+  state.data.desktopPictures = mergeDesktopPictures(state.data.desktopPictures, [picture]);
+  state.pictureWindowId = id;
+  saveData({ immediate: true });
+  render();
+}
+
+function isImageFile(file) {
+  return Boolean(file?.type?.startsWith("image/")) || /\.(avif|gif|heic|heif|jpe?g|png|webp)$/i.test(file?.name || "");
+}
+
+function resizeImageFile(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.addEventListener("load", () => {
+      const image = new Image();
+
+      image.addEventListener("load", () => {
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      });
+
+      image.addEventListener("error", () => reject(new Error("Image could not be loaded.")));
+      image.src = reader.result;
     });
 
-    image.src = reader.result;
+    reader.addEventListener("error", () => reject(new Error("Image could not be read.")));
+    reader.readAsDataURL(file);
   });
-
-  reader.readAsDataURL(file);
 }
 
 function escapeHtml(value) {

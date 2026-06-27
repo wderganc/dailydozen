@@ -179,6 +179,10 @@ h2 {
   opacity: 0;
 }
 
+.desktop-surface.is-picture-drag-over::after {
+  opacity: 0.58;
+}
+
 .desktop-surface::after {
   position: absolute;
   inset: 0;
@@ -342,6 +346,35 @@ h2 {
   border: 2px solid #000000;
   background: #eeeeee;
   box-shadow: inset 3px 3px 0 #ffffff, inset -3px -3px 0 #8a8a8a;
+}
+
+.icon-picture {
+  overflow: hidden;
+  background: #ffffff !important;
+}
+
+.icon-picture::before {
+  position: absolute;
+  inset: 4px;
+  border: 1px solid #000000;
+  background-image: var(--picture-thumb);
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.75);
+  content: "";
+}
+
+.icon-picture::after {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 12px;
+  height: 10px;
+  border-top: 1px solid #000000;
+  border-left: 1px solid #000000;
+  background: #eeeeee;
+  box-shadow: inset 1px 1px 0 #ffffff;
+  content: "";
 }
 
 .icon-drive::before {
@@ -1688,6 +1721,52 @@ button:focus {
 .facetime-empty p {
   margin-top: 6px;
   font-weight: 700;
+}
+
+.picture-window {
+  position: absolute;
+  top: max(46px, 8vh);
+  left: clamp(14px, 25vw, 300px);
+  z-index: 19;
+  width: min(620px, calc(100% - 28px));
+  padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
+}
+
+.picture-window::after {
+  display: none;
+}
+
+.picture-frame {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.picture-frame img {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 150px);
+  border: 2px solid #000000;
+  background: #ffffff;
+  box-shadow:
+    inset 2px 2px 0 #ffffff,
+    3px 3px 0 rgba(0, 0, 0, 0.24);
+  object-fit: contain;
+}
+
+.picture-frame figcaption {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.picture-frame strong {
+  color: #000000;
+  font-size: 11px;
 }
 
 .seed-window {
