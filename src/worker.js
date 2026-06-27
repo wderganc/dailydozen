@@ -67,6 +67,7 @@ function normalizeData(data) {
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
+    facetimeVideo: normalizeFacetimeVideo(data?.facetimeVideo),
   };
 }
 
@@ -80,6 +81,26 @@ function normalizeItems(items) {
 
 function normalizeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeFacetimeVideo(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const data = typeof value.data === "string" && value.data.startsWith("data:video/") ? value.data : "";
+  if (!data) return {};
+
+  return {
+    data,
+    name: normalizeShortText(value.name, "Shared video", 96),
+    type: normalizeShortText(value.type, "video/mp4", 48),
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+  };
+}
+
+function normalizeShortText(value, fallback = "", maxLength = 80) {
+  const normalized = String(value || "").trim();
+  return (normalized || fallback).slice(0, maxLength);
 }
 
 function normalizeIconPositions(value) {

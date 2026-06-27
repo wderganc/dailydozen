@@ -57,14 +57,15 @@ const WALLPAPER_JPEG_QUALITY = 0.78;
 const DEFAULT_WALLPAPER_MODE = "tile";
 const KIMCHI_QUEST_MAX_BITES = 5;
 const MONKEY_SOUND_URL = "assets/monkey-sfx.wav";
+const FACETIME_VIDEO_MAX_BYTES = 8 * 1024 * 1024;
 const UKULELE_VIDEOS = [
   {
     watch: "https://www.youtube.com/watch?v=Xl-BNTeJXjw",
-    embed: "https://www.youtube.com/embed/Xl-BNTeJXjw?autoplay=1&rel=0",
+    embed: "https://www.youtube.com/embed/Xl-BNTeJXjw?autoplay=1&rel=0&controls=0&modestbranding=1&playsinline=1&fs=0&iv_load_policy=3&disablekb=1",
   },
   {
     watch: "https://www.youtube.com/watch?v=iMJEtLjnO7E",
-    embed: "https://www.youtube.com/embed/iMJEtLjnO7E?autoplay=1&rel=0",
+    embed: "https://www.youtube.com/embed/iMJEtLjnO7E?autoplay=1&rel=0&controls=0&modestbranding=1&playsinline=1&fs=0&iv_load_policy=3&disablekb=1",
   },
 ];
 const CLAUDIA_SEEDS = [
@@ -99,6 +100,8 @@ const state = {
   ukuleleWindowOpen: false,
   ukuleleVideoIndex: 0,
   seedWindow: "",
+  facetimeWindowOpen: false,
+  facetimeUploadStatus: "",
 };
 
 function loadIconPositions() {
@@ -181,6 +184,7 @@ function getDefaultData() {
     wallpaper: "",
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
     iconPositions: {},
+    facetimeVideo: {},
   };
 }
 
@@ -200,6 +204,7 @@ function loadData() {
       wallpaper: normalizeWallpaper(parsed.wallpaper),
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
       iconPositions: normalizeIconPositions(parsed.iconPositions || loadIconPositions()),
+      facetimeVideo: normalizeFacetimeVideo(parsed.facetimeVideo),
     };
   } catch {
     return fallback;
@@ -216,7 +221,28 @@ function normalizeData(data) {
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
+    facetimeVideo: normalizeFacetimeVideo(data?.facetimeVideo),
   };
+}
+
+function normalizeFacetimeVideo(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const data = typeof value.data === "string" && value.data.startsWith("data:video/") ? value.data : "";
+  if (!data) return {};
+
+  return {
+    data,
+    name: normalizeShortText(value.name, "Shared video", 96),
+    type: normalizeShortText(value.type, "video/mp4", 48),
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+  };
+}
+
+function normalizeShortText(value, fallback = "", maxLength = 80) {
+  const normalized = String(value || "").trim();
+  return (normalized || fallback).slice(0, maxLength);
 }
 
 function normalizeIconPositions(value) {
@@ -254,7 +280,9 @@ function saveLocalData() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
   } catch {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.data, wallpaper: "" }));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.data, wallpaper: "", facetimeVideo: {} }));
+    } catch {}
   }
 }
 
@@ -304,6 +332,7 @@ async function saveRemoteData() {
 async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) {
   state.remoteStatus = "checking";
   updateSyncIndicator();
+  const previousFacetimeVideoData = state.data.facetimeVideo?.data || "";
 
   try {
     const response = await fetch(API_STATE_URL, {
@@ -327,7 +356,14 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
       scheduleRemoteSave();
     }
 
-    if (renderAfter && !isTextEditing() && !state.ukuleleWindowOpen) {
+    const facetimeVideoChanged = previousFacetimeVideoData !== (state.data.facetimeVideo?.data || "");
+
+    if (
+      renderAfter &&
+      !isTextEditing() &&
+      !state.ukuleleWindowOpen &&
+      (!state.facetimeWindowOpen || facetimeVideoChanged)
+    ) {
       render();
     } else {
       updateSyncIndicator();
@@ -378,11 +414,16 @@ function mergeData(remoteData, localData) {
     wallpaper: remote.wallpaper || local.wallpaper || "",
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: hasIconPositions(remote.iconPositions) ? remote.iconPositions : local.iconPositions,
+    facetimeVideo: hasFacetimeVideo(remote.facetimeVideo) ? remote.facetimeVideo : local.facetimeVideo,
   };
 }
 
 function hasIconPositions(iconPositions) {
   return Object.keys(iconPositions || {}).length > 0;
+}
+
+function hasFacetimeVideo(video) {
+  return Boolean(video?.data);
 }
 
 function mergeNestedObjects(base, override) {
@@ -425,6 +466,7 @@ function hasLocalActivity(data) {
     Object.keys(data.sharedNotes || {}).length > 0 ||
     Object.keys(data.sharedNoteMeta || {}).length > 0 ||
     hasIconPositions(data.iconPositions) ||
+    hasFacetimeVideo(data.facetimeVideo) ||
     Boolean(data.wallpaper) ||
     data.wallpaperMode === "fill"
   );
@@ -707,6 +749,10 @@ function renderMacShell(content) {
             <span class="icon-bird"></span>
             <strong>Bird Calls</strong>
           </div>
+          <button class="desktop-icon desktop-drop-target" type="button" data-desktop-icon="facetime" data-facetime-drop aria-label="Open FaceTime or drop a shared video file" title="Drop a video here to share it" style="${getDesktopIconStyle("facetime")}">
+            <span class="icon-facetime"></span>
+            <strong>FaceTime</strong>
+          </button>
           <button class="desktop-icon" type="button" data-desktop-icon="claudias-seed-collection" data-open-seed-window="claudia" aria-label="Open Claudia's Seed Collection" style="${getDesktopIconStyle("claudias-seed-collection")}">
             <span class="icon-folder"></span>
             <strong>Claudia's Seed Collection</strong>
@@ -737,6 +783,7 @@ function renderMacShell(content) {
         ${state.kimchiQuestOpen ? renderKimchiQuestWindow() : ""}
         ${state.ukuleleWindowOpen ? renderUkuleleWindow() : ""}
         ${state.seedWindow ? renderSeedWindow(state.seedWindow) : ""}
+        ${state.facetimeWindowOpen ? renderFacetimeWindow() : ""}
       </div>
     </div>
   `;
@@ -1019,13 +1066,41 @@ function renderUkuleleWindow() {
   const video = UKULELE_VIDEOS[state.ukuleleVideoIndex] || UKULELE_VIDEOS[0];
 
   return `
-    <section class="youtube-window mac-window" data-window-title="ULaylee" role="dialog" aria-labelledby="ukulele-title">
+    <section class="youtube-window mac-window" data-window-title="ULaylee" role="dialog" aria-label="ULaylee">
       <button class="window-close" type="button" data-close-ukulele aria-label="Close ULaylee" title="Close">×</button>
-      <h2 id="ukulele-title" class="youtube-window-title">ULaylee</h2>
       <div class="youtube-frame-shell">
-        <iframe src="${escapeAttribute(video.embed)}" title="ULaylee YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+        <iframe src="${escapeAttribute(video.embed)}" title="ULaylee YouTube video" scrolling="no" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"></iframe>
       </div>
-      <a class="youtube-source-link" href="${escapeAttribute(video.watch)}" target="_blank" rel="noopener">Open on YouTube</a>
+    </section>
+  `;
+}
+
+function renderFacetimeWindow() {
+  const video = normalizeFacetimeVideo(state.data.facetimeVideo);
+  const hasVideo = hasFacetimeVideo(video);
+  const status = state.facetimeUploadStatus || (hasVideo ? `From ${video.uploadedBy}` : "Drop a video file onto the FaceTime icon.");
+
+  return `
+    <section class="facetime-window mac-window" data-window-title="FaceTime" role="dialog" aria-labelledby="facetime-title">
+      <button class="window-close" type="button" data-close-facetime aria-label="Close FaceTime" title="Close">×</button>
+      <div class="facetime-window-header">
+        <p class="eyebrow">shared video</p>
+        <h2 id="facetime-title">FaceTime</h2>
+        <p>${escapeHtml(status)}</p>
+      </div>
+      ${
+        hasVideo
+          ? `
+            <video class="facetime-video" controls playsinline src="${escapeAttribute(video.data)}"></video>
+            <p class="facetime-meta">${escapeHtml(video.name)}${video.size ? ` - ${formatFileSize(video.size)}` : ""}</p>
+          `
+          : `
+            <div class="facetime-empty">
+              <span class="icon-facetime" aria-hidden="true"></span>
+              <p>No shared video yet.</p>
+            </div>
+          `
+      }
     </section>
   `;
 }
@@ -1141,6 +1216,7 @@ function bindEvents() {
   bindUkuleleEvents();
   bindSeedWindowEvents();
   bindMonkeySoundEvents();
+  bindFacetimeEvents();
 
   document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
     toggleWallpaperMode();
@@ -1200,6 +1276,102 @@ function bindEvents() {
     saveData();
     render();
   });
+}
+
+function bindFacetimeEvents() {
+  const icon = document.querySelector("[data-facetime-drop]");
+
+  if (!icon) return;
+
+  icon.addEventListener("click", () => {
+    if (icon.dataset.dragMoved === "true") {
+      icon.dataset.dragMoved = "";
+      return;
+    }
+
+    state.facetimeWindowOpen = true;
+    state.facetimeUploadStatus = "";
+    render();
+  });
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    icon.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      icon.classList.add("is-drag-over");
+    });
+  });
+
+  ["dragleave", "dragend"].forEach((eventName) => {
+    icon.addEventListener(eventName, () => {
+      icon.classList.remove("is-drag-over");
+    });
+  });
+
+  icon.addEventListener("drop", (event) => {
+    event.preventDefault();
+    icon.classList.remove("is-drag-over");
+    const file = event.dataTransfer?.files?.[0];
+    if (file) setFacetimeVideoFromFile(file);
+  });
+
+  document.querySelector("[data-close-facetime]")?.addEventListener("click", () => {
+    state.facetimeWindowOpen = false;
+    state.facetimeUploadStatus = "";
+    render();
+  });
+}
+
+function setFacetimeVideoFromFile(file) {
+  state.facetimeWindowOpen = true;
+
+  if (!isVideoFile(file)) {
+    state.facetimeUploadStatus = "That is not a video file.";
+    render();
+    return;
+  }
+
+  if (file.size > FACETIME_VIDEO_MAX_BYTES) {
+    state.facetimeUploadStatus = `That video is ${formatFileSize(file.size)}. Please use ${formatFileSize(FACETIME_VIDEO_MAX_BYTES)} or less.`;
+    render();
+    return;
+  }
+
+  const reader = new FileReader();
+  state.facetimeUploadStatus = "Preparing video...";
+  render();
+
+  reader.addEventListener("load", () => {
+    const user = getUser();
+    state.data.facetimeVideo = {
+      data: String(reader.result || ""),
+      name: file.name || "Shared video",
+      type: file.type || "video/mp4",
+      size: file.size,
+      uploadedBy: user?.name || "Daily Dozen",
+      uploadedAt: new Date().toISOString(),
+    };
+    state.facetimeUploadStatus = `Shared ${file.name || "video"}.`;
+    saveData({ immediate: true });
+    render();
+  });
+
+  reader.addEventListener("error", () => {
+    state.facetimeUploadStatus = "That video could not be read.";
+    render();
+  });
+
+  reader.readAsDataURL(file);
+}
+
+function isVideoFile(file) {
+  return file.type.startsWith("video/") || /\.(mp4|m4v|mov|webm|ogv)$/i.test(file.name || "");
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
 }
 
 function bindMonkeySoundEvents() {

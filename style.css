@@ -485,6 +485,48 @@ h2 {
   content: "";
 }
 
+.icon-facetime {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 42px !important;
+  height: 32px !important;
+  margin-top: 3px;
+  border: 2px solid #000000;
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 17px 16px, #0e4f35 0 6px, transparent 7px),
+    radial-gradient(circle at 17px 16px, #9cffce 0 9px, transparent 10px),
+    linear-gradient(#6bf2a5, #22a65f) !important;
+  box-shadow:
+    inset 2px 2px 0 #c8ffdf,
+    inset -3px -3px 0 #0e5f38,
+    2px 2px 0 rgba(0, 0, 0, 0.2) !important;
+}
+
+.icon-facetime::before {
+  position: absolute;
+  top: 9px;
+  right: -4px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #000000;
+  background: #d6ffe6;
+  clip-path: polygon(0 25%, 100% 0, 100% 100%, 0 75%);
+  content: "";
+}
+
+.icon-facetime::after {
+  position: absolute;
+  bottom: 5px;
+  left: 8px;
+  width: 17px;
+  height: 3px;
+  background: #000000;
+  box-shadow: 0 -11px 0 #000000;
+  content: "";
+}
+
 .icon-folder {
   width: 42px !important;
   height: 31px !important;
@@ -1450,17 +1492,12 @@ button:focus {
   z-index: 13;
   display: grid;
   width: min(318px, calc(100% - 24px));
-  gap: 8px;
+  overflow: hidden;
   padding: 28px 10px 10px;
 }
 
 .youtube-window::after {
   display: none;
-}
-
-.youtube-window-title {
-  margin: 0;
-  font-size: 14px;
 }
 
 .youtube-frame-shell {
@@ -1481,16 +1518,63 @@ button:focus {
   border: 0;
 }
 
-.youtube-source-link {
-  justify-self: start;
-  color: #000000;
-  font-weight: 700;
+.facetime-window {
+  position: absolute;
+  top: 118px;
+  left: clamp(12px, 36vw, 390px);
+  z-index: 15;
+  width: min(360px, calc(100% - 24px));
+  padding: 28px 10px 10px;
 }
 
-.youtube-source-link:hover,
-.youtube-source-link:focus {
-  color: #ffffff;
+.facetime-window::after {
+  display: none;
+}
+
+.facetime-window-header {
+  margin-bottom: 8px;
+}
+
+.facetime-window-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.facetime-window-header p:last-child,
+.facetime-meta {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.facetime-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 2px solid #000000;
   background: #000000;
+  box-shadow:
+    inset 2px 2px 0 #777777,
+    3px 3px 0 rgba(0, 0, 0, 0.24);
+}
+
+.facetime-empty {
+  display: grid;
+  min-height: 188px;
+  place-items: center;
+  border: 2px solid #000000;
+  background:
+    repeating-linear-gradient(45deg, #ffffff 0 6px, #e7e7e7 6px 12px);
+  text-align: center;
+}
+
+.facetime-empty .icon-facetime {
+  margin-top: 0;
+}
+
+.facetime-empty p {
+  margin-top: 6px;
+  font-weight: 700;
 }
 
 .seed-window {
@@ -1532,16 +1616,6 @@ button:focus {
     inset -2px -2px 0 rgba(0, 0, 0, 0.2);
 }
 
-.seed-packet::before {
-  position: absolute;
-  top: 30px;
-  right: 8px;
-  left: 8px;
-  height: 2px;
-  background: #000000;
-  content: "";
-}
-
 .seed-packet::after {
   position: absolute;
   right: 9px;
@@ -1568,6 +1642,7 @@ button:focus {
   display: block;
   margin-top: 2px;
   font-size: 13px;
+  text-decoration: none;
 }
 
 .seed-packet > span:last-child {
