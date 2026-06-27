@@ -315,6 +315,25 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.desktop-icon .desktop-badge {
+  position: absolute;
+  top: -5px;
+  right: 15px;
+  z-index: 4;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 2px solid #000000;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #d31313;
+  box-shadow: 1px 1px 0 #000000;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .desktop-icon span {
   position: relative;
   display: block;
@@ -1500,6 +1519,34 @@ button:focus {
     #f4691d;
 }
 
+.monkey-video-window {
+  position: absolute;
+  top: 112px;
+  left: clamp(12px, 32vw, 330px);
+  z-index: 16;
+  width: min(480px, calc(100% - 24px));
+  overflow: hidden;
+  padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
+}
+
+.monkey-video-window::after {
+  display: none;
+}
+
+.monkey-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 150px);
+  border: 2px solid #000000;
+  background: #000000;
+  box-shadow:
+    inset 2px 2px 0 #777777,
+    3px 3px 0 rgba(0, 0, 0, 0.22);
+  object-fit: contain;
+}
+
 .youtube-window {
   position: absolute;
   top: 108px;
@@ -1533,102 +1580,6 @@ button:focus {
   width: 100%;
   height: 100%;
   border: 0;
-}
-
-.youtube-window.is-opening {
-  z-index: 45;
-}
-
-.ukulele-opening-cover {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  border: 2px solid #000000;
-  color: #000000;
-  background:
-    radial-gradient(circle at 50% 44%, rgba(255, 255, 255, 0.62) 0 18%, transparent 19%),
-    repeating-linear-gradient(45deg, #f8f8f8 0 7px, #bcbcbc 7px 14px);
-  box-shadow:
-    inset 3px 3px 0 #ffffff,
-    inset -3px -3px 0 #777777;
-  pointer-events: none;
-  animation: ukulele-cover-clear 2s steps(1, end) var(--uke-animation-delay, 0ms) forwards;
-}
-
-.ukulele-opening-cover span {
-  padding: 2px 6px;
-  border: 2px solid #000000;
-  background: #ffffff;
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
-  font-weight: 700;
-}
-
-.ukulele-launch-effect {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 70;
-  display: grid;
-  place-items: center;
-  width: var(--end-width, 300px);
-  height: var(--end-height, 300px);
-  border: 2px solid #000000;
-  background:
-    linear-gradient(#ffffff, #ffffff) center / calc(100% - 54px) 2px no-repeat,
-    repeating-linear-gradient(0deg, #f8f8f8 0 3px, #9c9c9c 3px 6px),
-    #eeeeee;
-  box-shadow:
-    inset 3px 3px 0 #ffffff,
-    inset -3px -3px 0 #777777,
-    4px 4px 0 rgba(0, 0, 0, 0.28);
-  pointer-events: none;
-  transform-origin: top left;
-  animation: ukulele-launch-zoom 2s cubic-bezier(0.16, 0.84, 0.24, 1) var(--uke-animation-delay, 0ms) forwards;
-}
-
-.ukulele-launch-effect .icon-ukulele {
-  position: relative;
-  display: block;
-  width: 38px;
-  height: 34px;
-  border: 2px solid #000000;
-  box-shadow:
-    inset 3px 3px 0 #ffffff,
-    inset -3px -3px 0 #8a8a8a;
-  transform: scale(1.35);
-}
-
-@keyframes ukulele-launch-zoom {
-  0% {
-    opacity: 0.98;
-    transform: translate(var(--start-x, 0), var(--start-y, 0)) scale(var(--start-scale-x, 0.2), var(--start-scale-y, 0.2));
-  }
-
-  62% {
-    opacity: 1;
-    transform: translate(var(--end-x, 0), var(--end-y, 0)) scale(1);
-  }
-
-  100% {
-    visibility: hidden;
-    opacity: 0;
-    transform: translate(var(--end-x, 0), var(--end-y, 0)) scale(1);
-  }
-}
-
-@keyframes ukulele-cover-clear {
-  0%,
-  99% {
-    visibility: visible;
-    opacity: 1;
-  }
-
-  100% {
-    visibility: hidden;
-    opacity: 0;
-  }
 }
 
 .facetime-window {
@@ -1701,10 +1652,6 @@ button:focus {
     inset 2px 2px 0 #777777,
     3px 3px 0 rgba(0, 0, 0, 0.24);
   object-fit: contain;
-}
-
-.facetime-video-local {
-  transform: scaleX(-1);
 }
 
 .facetime-download-link {
@@ -2142,14 +2089,6 @@ body.crt-on::after {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ukulele-launch-effect {
-    animation-duration: 1ms;
-  }
-
-  .ukulele-opening-cover {
-    animation: none;
-  }
-
   body.crt-on::after {
     animation: none;
   }
