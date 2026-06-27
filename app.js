@@ -472,7 +472,7 @@ function renderMacShell(content) {
   return `
     <div class="mac-shell">
       <header class="system-menu" aria-hidden="true">
-        <div class="menu-mark"><span class="apple-pixel"></span></div>
+        <div class="menu-mark">D12</div>
         <div class="menu-items">
           <span>File</span>
           <span>Edit</span>
