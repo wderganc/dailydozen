@@ -373,12 +373,34 @@ async function saveRemoteData() {
   updateSyncIndicator();
 
   try {
+    let dataToSave = state.data;
+
+    try {
+      const currentResponse = await fetch(API_STATE_URL, {
+        headers: {
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+
+      if (currentResponse.ok) {
+        const currentPayload = await currentResponse.json();
+        const currentData = normalizeData(currentPayload.data);
+        dataToSave = {
+          ...state.data,
+          facetimeVideos: mergeFacetimeVideos(currentData.facetimeVideos, state.data.facetimeVideos),
+        };
+        state.data = dataToSave;
+        saveLocalData();
+      }
+    } catch {}
+
     const response = await fetch(API_STATE_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ data: state.data }),
+      body: JSON.stringify({ data: dataToSave }),
     });
 
     if (!response.ok) throw new Error(`Remote save failed: ${response.status}`);
@@ -853,9 +875,95 @@ function iconMarkup(name) {
 }
 
 function render() {
+  const preservedMediaWindows = collectPreservedMediaWindows();
   const user = getUser();
   app.innerHTML = renderMacShell(user ? renderDashboard(user) : renderLogin());
   bindEvents();
+  restorePreservedMediaWindows(preservedMediaWindows);
+}
+
+function collectPreservedMediaWindows() {
+  return ["facetime", "monkey-see-genevieve-do", "ulaylee"]
+    .map((id) => {
+      const node = document.querySelector(`[data-draggable-window="${id}"]`);
+
+      return {
+        id,
+        key: getMediaWindowPreserveKey(id),
+        node,
+        playback: getMediaPlaybackSnapshot(node),
+      };
+    })
+    .filter((entry) => entry.key && entry.node);
+}
+
+function restorePreservedMediaWindows(entries) {
+  entries.forEach(({ id, key, node, playback }) => {
+    if (key !== getMediaWindowPreserveKey(id)) return;
+
+    const replacement = document.querySelector(`[data-draggable-window="${id}"]`);
+    if (!replacement) return;
+
+    replacement.replaceWith(node);
+    restoreMediaPlayback(node, playback);
+  });
+}
+
+function getMediaPlaybackSnapshot(node) {
+  if (!node) return [];
+
+  return Array.from(node.querySelectorAll("video")).map((video, index) => ({
+    index,
+    currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+    muted: video.muted,
+    paused: video.paused,
+    playbackRate: video.playbackRate,
+  }));
+}
+
+function restoreMediaPlayback(node, snapshots) {
+  snapshots.forEach((snapshot) => {
+    const video = node.querySelectorAll("video")[snapshot.index];
+    if (!video) return;
+
+    const restore = () => {
+      try {
+        video.currentTime = snapshot.currentTime;
+      } catch {}
+
+      video.muted = snapshot.muted;
+      video.playbackRate = snapshot.playbackRate || 1;
+
+      if (!snapshot.paused) {
+        video.play().catch(() => {});
+      }
+    };
+
+    if (video.readyState >= 1) {
+      restore();
+      return;
+    }
+
+    video.addEventListener("loadedmetadata", restore, { once: true });
+  });
+}
+
+function getMediaWindowPreserveKey(id) {
+  if (id === "facetime") {
+    const owner = getVisibleFacetimeOwner();
+    const videoId = getVisibleFacetimeVideoId();
+    return state.facetimeWindowOpen && owner && videoId ? `facetime:${state.facetimeMode}:${owner.id}:${videoId}` : "";
+  }
+
+  if (id === "monkey-see-genevieve-do") {
+    return state.monkeyWindowOpen ? "monkey-see-genevieve-do" : "";
+  }
+
+  if (id === "ulaylee") {
+    return state.ukuleleWindowOpen ? `ulaylee:${state.ukuleleVideoIndex}` : "";
+  }
+
+  return "";
 }
 
 function renderMacShell(content) {
@@ -1252,6 +1360,7 @@ function renderFacetimeWindow() {
   const video = getVisibleFacetimeVideo();
   const hasVideo = hasFacetimeVideo(video);
   const ownerName = owner?.name || "Daily Dozen";
+  const partnerVideoLabel = `Video from ${ownerName}`;
   const status =
     state.facetimePlaybackStatus ||
     state.facetimeUploadStatus ||
@@ -1267,12 +1376,12 @@ function renderFacetimeWindow() {
     <section class="facetime-window mac-window" data-window-title="FaceTime" data-draggable-window="facetime" style="${getWindowStyle("facetime")}" role="dialog" aria-labelledby="facetime-title">
       <button class="window-close" type="button" data-close-facetime aria-label="Close FaceTime" title="Close">×</button>
       <div class="facetime-window-header">
-        <p class="eyebrow">${viewingMine ? "my upload" : "main video"}</p>
+        <p class="eyebrow">${viewingMine ? "my upload" : escapeHtml(partnerVideoLabel)}</p>
         <h2 id="facetime-title">FaceTime</h2>
         <p data-facetime-status>${escapeHtml(status)}</p>
       </div>
       <div class="facetime-mode-switch" role="group" aria-label="FaceTime view">
-        <button class="facetime-mode-button ${!viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="shared" aria-pressed="${!viewingMine}">Main video</button>
+        <button class="facetime-mode-button ${!viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="shared" aria-pressed="${!viewingMine}">${escapeHtml(partnerVideoLabel)}</button>
         <button class="facetime-mode-button ${viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="mine" aria-pressed="${viewingMine}">My video</button>
       </div>
       ${

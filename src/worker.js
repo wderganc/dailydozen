@@ -21,6 +21,11 @@ const JSON_HEADERS = {
 };
 
 const DEFAULT_WALLPAPER_MODE = "tile";
+const USER_IDS = ["you", "wife"];
+const USER_NAMES = {
+  you: "Scotty P.",
+  wife: "Claudie D.",
+};
 
 export default {
   async fetch(request, env) {
@@ -67,7 +72,7 @@ function normalizeData(data) {
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
-    facetimeVideo: normalizeFacetimeVideo(data?.facetimeVideo),
+    facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
   };
 }
 
@@ -83,19 +88,64 @@ function normalizeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function normalizeFacetimeVideo(value) {
+function normalizeFacetimeVideos(value, legacyVideo) {
+  const videos = {};
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    Object.entries(value).forEach(([userId, video]) => {
+      if (!USER_IDS.includes(userId)) return;
+
+      const normalized = normalizeFacetimeVideo(video, userId);
+      if (normalized.data) videos[userId] = normalized;
+    });
+  }
+
+  if (!Object.keys(videos).length) {
+    const legacy = normalizeFacetimeVideo(legacyVideo);
+    if (legacy.data) {
+      const userId = inferFacetimeUploaderId(legacy) || USER_IDS[0];
+      videos[userId] = {
+        ...legacy,
+        uploadedUserId: userId,
+        uploadedBy: USER_NAMES[userId] || legacy.uploadedBy,
+      };
+    }
+  }
+
+  return videos;
+}
+
+function normalizeFacetimeVideo(value, fallbackUserId = "") {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const data = typeof value.data === "string" && value.data.startsWith("data:video/") ? value.data : "";
-  if (!data) return {};
+  const type = normalizeShortText(value.type, "video/mp4", 48);
+  const data = normalizeVideoDataUrl(value.data, type);
+  if (!data.startsWith("data:video/")) return {};
+  const uploadedUserId = USER_IDS.includes(value.uploadedUserId) ? value.uploadedUserId : fallbackUserId;
 
   return {
     data,
     name: normalizeShortText(value.name, "Shared video", 96),
-    type: normalizeShortText(value.type, "video/mp4", 48),
+    type,
     size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
     uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
     uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+    uploadedUserId,
+    videoId: normalizeShortText(value.videoId, "", 96) || normalizeShortText(value.uploadedAt, "", 48) || `${data.length}-${data.slice(-36)}`,
   };
+}
+
+function inferFacetimeUploaderId(video) {
+  if (USER_IDS.includes(video.uploadedUserId)) return video.uploadedUserId;
+  const uploadedBy = String(video.uploadedBy || "").trim().toLowerCase();
+  return USER_IDS.find((userId) => USER_NAMES[userId].toLowerCase() === uploadedBy) || "";
+}
+
+function normalizeVideoDataUrl(dataUrl, type) {
+  if (typeof dataUrl !== "string") return "";
+  if (dataUrl.startsWith("data:video/")) return dataUrl;
+  if (dataUrl.startsWith("data:;base64,")) return `data:${type};base64,${dataUrl.split(",")[1] || ""}`;
+  if (dataUrl.startsWith("data:application/octet-stream;base64,")) return `data:${type};base64,${dataUrl.split(",")[1] || ""}`;
+  return "";
 }
 
 function normalizeShortText(value, fallback = "", maxLength = 80) {
