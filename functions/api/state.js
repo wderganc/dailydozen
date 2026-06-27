@@ -41,7 +41,9 @@ export async function onRequestPost({ request, env }) {
 
   try {
     const payload = await request.json();
-    const data = normalizeData(payload.data);
+    const incomingData = normalizeData(payload.data);
+    const storedData = normalizeData(await store.get(STORAGE_KEY, "json"));
+    const data = mergeStoredData(storedData, incomingData);
     await store.put(STORAGE_KEY, JSON.stringify(data));
     return json({ data });
   } catch {
@@ -64,6 +66,13 @@ function normalizeData(data) {
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
+  };
+}
+
+function mergeStoredData(storedData, incomingData) {
+  return {
+    ...incomingData,
+    facetimeVideos: mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos),
   };
 }
 
@@ -104,6 +113,38 @@ function normalizeFacetimeVideos(value, legacyVideo) {
   }
 
   return videos;
+}
+
+function hasFacetimeVideo(video) {
+  return Boolean(video?.data);
+}
+
+function mergeFacetimeVideos(storedVideos, incomingVideos) {
+  const merged = { ...(storedVideos || {}) };
+
+  Object.entries(incomingVideos || {}).forEach(([userId, incomingVideo]) => {
+    const storedVideo = merged[userId];
+
+    if (!hasFacetimeVideo(storedVideo) || isNewerFacetimeVideo(incomingVideo, storedVideo)) {
+      merged[userId] = incomingVideo;
+    }
+  });
+
+  return merged;
+}
+
+function isNewerFacetimeVideo(candidate, current) {
+  const candidateTime = Date.parse(candidate?.uploadedAt || "");
+  const currentTime = Date.parse(current?.uploadedAt || "");
+
+  if (Number.isFinite(candidateTime) && Number.isFinite(currentTime)) return candidateTime > currentTime;
+  if (Number.isFinite(candidateTime)) return true;
+  if (Number.isFinite(currentTime)) return false;
+  return getFacetimeVideoId(candidate) !== getFacetimeVideoId(current);
+}
+
+function getFacetimeVideoId(video) {
+  return video?.videoId || video?.uploadedAt || "";
 }
 
 function normalizeFacetimeVideo(value, fallbackUserId = "") {

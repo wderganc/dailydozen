@@ -876,10 +876,13 @@ function iconMarkup(name) {
 
 function render() {
   const preservedMediaWindows = collectPreservedMediaWindows();
+  const restorableMediaIds = getRestorableMediaIds(preservedMediaWindows);
+  const mediaParkingLot = parkPreservedMediaWindows(preservedMediaWindows);
   const user = getUser();
-  app.innerHTML = renderMacShell(user ? renderDashboard(user) : renderLogin());
+  app.innerHTML = renderMacShell(user ? renderDashboard(user) : renderLogin(), restorableMediaIds);
   bindEvents();
   restorePreservedMediaWindows(preservedMediaWindows);
+  mediaParkingLot?.remove();
 }
 
 function collectPreservedMediaWindows() {
@@ -889,7 +892,7 @@ function collectPreservedMediaWindows() {
 
       return {
         id,
-        key: getMediaWindowPreserveKey(id),
+        key: node?.dataset.mediaPreserveKey || "",
         node,
         playback: getMediaPlaybackSnapshot(node),
       };
@@ -897,11 +900,27 @@ function collectPreservedMediaWindows() {
     .filter((entry) => entry.key && entry.node);
 }
 
+function getRestorableMediaIds(entries) {
+  return new Set(entries.filter(({ id, key }) => key === getMediaWindowPreserveKey(id)).map(({ id }) => id));
+}
+
+function parkPreservedMediaWindows(entries) {
+  const restorableEntries = entries.filter(({ id, key }) => key === getMediaWindowPreserveKey(id));
+  if (!restorableEntries.length) return null;
+
+  const parkingLot = document.createElement("div");
+  parkingLot.setAttribute("aria-hidden", "true");
+  parkingLot.style.cssText = "position:fixed;inset:0;overflow:hidden;opacity:0;pointer-events:none;z-index:-1;";
+  document.body.append(parkingLot);
+  restorableEntries.forEach(({ node }) => parkingLot.append(node));
+  return parkingLot;
+}
+
 function restorePreservedMediaWindows(entries) {
   entries.forEach(({ id, key, node, playback }) => {
     if (key !== getMediaWindowPreserveKey(id)) return;
 
-    const replacement = document.querySelector(`[data-draggable-window="${id}"]`);
+    const replacement = document.querySelector(`[data-media-window-placeholder="${id}"], [data-draggable-window="${id}"]`);
     if (!replacement) return;
 
     replacement.replaceWith(node);
@@ -950,9 +969,7 @@ function restoreMediaPlayback(node, snapshots) {
 
 function getMediaWindowPreserveKey(id) {
   if (id === "facetime") {
-    const owner = getVisibleFacetimeOwner();
-    const videoId = getVisibleFacetimeVideoId();
-    return state.facetimeWindowOpen && owner && videoId ? `facetime:${state.facetimeMode}:${owner.id}:${videoId}` : "";
+    return getFacetimeMediaPreserveKey();
   }
 
   if (id === "monkey-see-genevieve-do") {
@@ -966,7 +983,18 @@ function getMediaWindowPreserveKey(id) {
   return "";
 }
 
-function renderMacShell(content) {
+function getFacetimeMediaPreserveKey() {
+  const owner = getVisibleFacetimeOwner();
+  const videoId = getVisibleFacetimeVideoId();
+  return state.facetimeWindowOpen && owner && videoId ? `facetime:${state.facetimeMode}:${owner.id}:${videoId}` : "";
+}
+
+function renderMediaWindowSlot(id, preservedMediaIds, html) {
+  if (preservedMediaIds.has(id)) return `<div data-media-window-placeholder="${escapeAttribute(id)}"></div>`;
+  return html;
+}
+
+function renderMacShell(content, preservedMediaIds = new Set()) {
   return `
     <div class="mac-shell">
       <header class="system-menu" aria-hidden="true">
@@ -1044,10 +1072,10 @@ function renderMacShell(content) {
 
         ${content}
         ${state.kimchiQuestOpen ? renderKimchiQuestWindow() : ""}
-        ${state.monkeyWindowOpen ? renderMonkeyWindow() : ""}
-        ${state.ukuleleWindowOpen ? renderUkuleleWindow() : ""}
+        ${state.monkeyWindowOpen ? renderMediaWindowSlot("monkey-see-genevieve-do", preservedMediaIds, renderMonkeyWindow()) : ""}
+        ${state.ukuleleWindowOpen ? renderMediaWindowSlot("ulaylee", preservedMediaIds, renderUkuleleWindow()) : ""}
         ${state.seedWindow ? renderSeedWindow(state.seedWindow) : ""}
-        ${state.facetimeWindowOpen ? renderFacetimeWindow() : ""}
+        ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
       </div>
     </div>
   `;
@@ -1334,7 +1362,7 @@ function renderKimchiQuestWindow() {
 
 function renderMonkeyWindow() {
   return `
-    <section class="monkey-video-window mac-window" data-window-title="Monkey See Genevieve Do" data-draggable-window="monkey-see-genevieve-do" style="${getWindowStyle("monkey-see-genevieve-do")}" role="dialog" aria-label="Monkey See Genevieve Do">
+    <section class="monkey-video-window mac-window" data-window-title="Monkey See Genevieve Do" data-draggable-window="monkey-see-genevieve-do" data-media-preserve-key="monkey-see-genevieve-do" style="${getWindowStyle("monkey-see-genevieve-do")}" role="dialog" aria-label="Monkey See Genevieve Do">
       <button class="window-close" type="button" data-close-monkey-video aria-label="Close Monkey See Genevieve Do" title="Close">×</button>
       <video class="monkey-video" controls autoplay playsinline data-monkey-video src="${MONKEY_VIDEO_URL}"></video>
     </section>
@@ -1345,7 +1373,7 @@ function renderUkuleleWindow() {
   const video = UKULELE_VIDEOS[state.ukuleleVideoIndex] || UKULELE_VIDEOS[0];
 
   return `
-    <section class="youtube-window mac-window" data-window-title="ULaylee" data-draggable-window="ulaylee" style="${getWindowStyle("ulaylee")}" role="dialog" aria-label="ULaylee">
+    <section class="youtube-window mac-window" data-window-title="ULaylee" data-draggable-window="ulaylee" data-media-preserve-key="ulaylee:${state.ukuleleVideoIndex}" style="${getWindowStyle("ulaylee")}" role="dialog" aria-label="ULaylee">
       <button class="window-close" type="button" data-close-ukulele aria-label="Close ULaylee" title="Close">×</button>
       <div class="youtube-frame-shell">
         <iframe src="${escapeAttribute(video.embed)}" title="ULaylee YouTube video" scrolling="no" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"></iframe>
@@ -1361,19 +1389,29 @@ function renderFacetimeWindow() {
   const hasVideo = hasFacetimeVideo(video);
   const ownerName = owner?.name || "Daily Dozen";
   const partnerVideoLabel = `Video from ${ownerName}`;
+  const mediaPreserveKey = hasVideo ? getFacetimeMediaPreserveKey() : "";
+  const waitingForVideo = !hasVideo && !state.remoteReady && state.remoteStatus === "checking";
+  const emptyVideoMessage =
+    viewingMine && state.facetimeUploadStatus
+      ? state.facetimeUploadStatus
+      : waitingForVideo
+      ? "Looking for video..."
+      : viewingMine
+      ? "No video from you yet."
+      : `No video from ${ownerName} yet.`;
   const status =
     state.facetimePlaybackStatus ||
     state.facetimeUploadStatus ||
-    (hasVideo
+    (waitingForVideo
+      ? "Looking for video..."
+      : hasVideo
       ? viewingMine
         ? "Your uploaded video"
         : `From ${ownerName}`
-      : viewingMine
-      ? "Drop a video file onto the FaceTime icon to add yours."
-      : `${ownerName} has not uploaded a video yet.`);
+      : emptyVideoMessage);
 
   return `
-    <section class="facetime-window mac-window" data-window-title="FaceTime" data-draggable-window="facetime" style="${getWindowStyle("facetime")}" role="dialog" aria-labelledby="facetime-title">
+    <section class="facetime-window mac-window" data-window-title="FaceTime" data-draggable-window="facetime" data-media-preserve-key="${escapeAttribute(mediaPreserveKey)}" style="${getWindowStyle("facetime")}" role="dialog" aria-labelledby="facetime-title">
       <button class="window-close" type="button" data-close-facetime aria-label="Close FaceTime" title="Close">×</button>
       <div class="facetime-window-header">
         <p class="eyebrow">${viewingMine ? "my upload" : escapeHtml(partnerVideoLabel)}</p>
@@ -1394,7 +1432,7 @@ function renderFacetimeWindow() {
           : `
             <div class="facetime-empty">
               <span class="icon-facetime" aria-hidden="true"></span>
-              <p>${viewingMine ? "No video from you yet." : `No video from ${escapeHtml(ownerName)} yet.`}</p>
+              <p>${escapeHtml(emptyVideoMessage)}</p>
             </div>
           `
       }
