@@ -336,6 +336,60 @@ h2 {
   content: "";
 }
 
+.icon-daily-dozen {
+  overflow: hidden;
+  width: 42px !important;
+  height: 36px !important;
+  margin-top: 1px;
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 9px 16px, #ff586f 0 2px, transparent 3px),
+    radial-gradient(circle at 17px 16px, #2e8df7 0 2px, transparent 3px),
+    radial-gradient(circle at 25px 16px, #28a858 0 2px, transparent 3px),
+    radial-gradient(circle at 33px 16px, #f09b25 0 2px, transparent 3px),
+    radial-gradient(circle at 9px 24px, #7858d6 0 2px, transparent 3px),
+    radial-gradient(circle at 17px 24px, #f24e9d 0 2px, transparent 3px),
+    radial-gradient(circle at 25px 24px, #129eb2 0 2px, transparent 3px),
+    radial-gradient(circle at 33px 24px, #b4c928 0 2px, transparent 3px),
+    radial-gradient(circle at 9px 31px, #ef6b28 0 2px, transparent 3px),
+    radial-gradient(circle at 17px 31px, #4d74dd 0 2px, transparent 3px),
+    radial-gradient(circle at 25px 31px, #54aa35 0 2px, transparent 3px),
+    radial-gradient(circle at 33px 31px, #e24d4d 0 2px, transparent 3px),
+    linear-gradient(#fff8ce 0 9px, #ffe877 9px 100%) !important;
+  box-shadow:
+    inset 2px 2px 0 #ffffff,
+    inset -3px -3px 0 #b48a10,
+    2px 2px 0 rgba(0, 0, 0, 0.2) !important;
+}
+
+.icon-daily-dozen::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 9px;
+  border-bottom: 2px solid #000000;
+  background:
+    linear-gradient(90deg, #ff7aa2 0 33%, #7fd8ff 33% 66%, #9ee45a 66% 100%);
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.8),
+    inset -2px 0 0 rgba(0, 0, 0, 0.2);
+  content: "";
+}
+
+.icon-daily-dozen::after {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 13px;
+  height: 8px;
+  border-bottom: 3px solid #116a2c;
+  border-left: 3px solid #116a2c;
+  content: "";
+  filter: drop-shadow(1px 1px 0 #ffffff);
+  transform: rotate(-45deg);
+}
+
 .icon-globe {
   border-radius: 50%;
   background:
@@ -704,18 +758,57 @@ h2 {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
+  position: relative;
+  display: block;
+  overflow: hidden;
   width: 38px;
   height: 34px;
   border: 2px solid #000000;
-  color: #ffffff;
+  border-radius: 5px;
+  color: transparent;
   background:
-    linear-gradient(135deg, #000000 0 48%, #ffffff 49% 52%, #000000 53%),
-    #000000;
-  box-shadow: inset 2px 2px 0 #777777;
-  font-size: 14px;
-  font-weight: 700;
+    radial-gradient(circle at 8px 15px, #ff586f 0 2px, transparent 3px),
+    radial-gradient(circle at 16px 15px, #2e8df7 0 2px, transparent 3px),
+    radial-gradient(circle at 24px 15px, #28a858 0 2px, transparent 3px),
+    radial-gradient(circle at 31px 15px, #f09b25 0 2px, transparent 3px),
+    radial-gradient(circle at 8px 23px, #7858d6 0 2px, transparent 3px),
+    radial-gradient(circle at 16px 23px, #f24e9d 0 2px, transparent 3px),
+    radial-gradient(circle at 24px 23px, #129eb2 0 2px, transparent 3px),
+    radial-gradient(circle at 31px 23px, #b4c928 0 2px, transparent 3px),
+    radial-gradient(circle at 8px 29px, #ef6b28 0 2px, transparent 3px),
+    radial-gradient(circle at 16px 29px, #4d74dd 0 2px, transparent 3px),
+    radial-gradient(circle at 24px 29px, #54aa35 0 2px, transparent 3px),
+    radial-gradient(circle at 31px 29px, #e24d4d 0 2px, transparent 3px),
+    linear-gradient(#fff8ce 0 9px, #ffe877 9px 100%);
+  box-shadow:
+    inset 2px 2px 0 #ffffff,
+    inset -3px -3px 0 #b48a10;
+  font-size: 0;
+}
+
+.brand-mark::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 9px;
+  border-bottom: 2px solid #000000;
+  background:
+    linear-gradient(90deg, #ff7aa2 0 33%, #7fd8ff 33% 66%, #9ee45a 66% 100%);
+  content: "";
+}
+
+.brand-mark::after {
+  position: absolute;
+  right: 3px;
+  bottom: 4px;
+  width: 12px;
+  height: 7px;
+  border-bottom: 3px solid #116a2c;
+  border-left: 3px solid #116a2c;
+  content: "";
+  filter: drop-shadow(1px 1px 0 #ffffff);
+  transform: rotate(-45deg);
 }
 
 .header-actions {
@@ -1178,6 +1271,176 @@ button:focus {
 
 .partner-glance strong {
   color: #000000;
+}
+
+.kimchi-game-window {
+  position: absolute;
+  top: 86px;
+  left: clamp(12px, 26vw, 248px);
+  z-index: 12;
+  display: grid;
+  width: 288px;
+  gap: 9px;
+  justify-items: center;
+  padding: 28px 12px 12px;
+  text-align: center;
+}
+
+.kimchi-game-window::after {
+  display: none;
+}
+
+.window-close {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid #000000;
+  color: #000000;
+  background: #d8d8d8;
+  box-shadow: inset 1px 1px 0 #ffffff;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.window-close:hover,
+.window-close:focus {
+  color: #ffffff;
+  background: #000000;
+}
+
+.kimchi-game-copy h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.kimchi-game-copy p:last-child {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.kimchi-jar-button {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 128px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.kimchi-jar-button:disabled {
+  cursor: default;
+}
+
+.kimchi-jar-button:active:not(:disabled) {
+  transform: translate(1px, 1px);
+}
+
+.kimchi-jar {
+  position: relative;
+  display: block;
+  width: 74px;
+  height: 96px;
+  margin-top: 18px;
+  border: 3px solid #000000;
+  border-radius: 10px 10px 14px 14px;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.72) 0 12%, transparent 13%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.08) 52%, rgba(80, 0, 0, 0.12));
+  box-shadow:
+    inset 3px 3px 0 rgba(255, 255, 255, 0.85),
+    inset -4px -4px 0 rgba(0, 0, 0, 0.22),
+    4px 4px 0 rgba(0, 0, 0, 0.22);
+}
+
+.kimchi-jar::before {
+  position: absolute;
+  top: -18px;
+  right: 4px;
+  left: 4px;
+  height: 15px;
+  border: 3px solid #000000;
+  background:
+    repeating-linear-gradient(90deg, #ffffff 0 4px, #a7a7a7 4px 7px);
+  content: "";
+}
+
+.kimchi-jar::after {
+  position: absolute;
+  top: 16px;
+  left: 13px;
+  width: 8px;
+  height: 52px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  content: "";
+}
+
+.kimchi-fill {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  overflow: hidden;
+  height: 82%;
+  border-radius: 6px 6px 10px 10px;
+  background:
+    radial-gradient(circle at 20px 16px, #ffe0aa 0 7px, transparent 8px),
+    radial-gradient(circle at 42px 18px, #ffd076 0 5px, transparent 6px),
+    radial-gradient(circle at 31px 34px, #ffefbc 0 8px, transparent 9px),
+    radial-gradient(circle at 47px 46px, #1c8d39 0 5px, transparent 6px),
+    radial-gradient(circle at 18px 55px, #2d9d47 0 5px, transparent 6px),
+    linear-gradient(#d5141a, #f4691d 40%, #9b1111);
+  transition: height 180ms steps(2, end);
+}
+
+.kimchi-jar[data-bites="1"] .kimchi-fill {
+  height: 64%;
+}
+
+.kimchi-jar[data-bites="2"] .kimchi-fill {
+  height: 48%;
+}
+
+.kimchi-jar[data-bites="3"] .kimchi-fill {
+  height: 32%;
+}
+
+.kimchi-jar[data-bites="4"] .kimchi-fill {
+  height: 16%;
+}
+
+.kimchi-jar[data-bites="5"] .kimchi-fill {
+  height: 0;
+}
+
+.kimchi-game-meter {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+}
+
+.kimchi-game-meter span {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #000000;
+  background: #ffffff;
+  box-shadow: inset 1px 1px 0 #d8d8d8;
+}
+
+.kimchi-game-meter span.is-eaten {
+  background:
+    linear-gradient(135deg, transparent 0 39%, #000000 40% 52%, transparent 53%),
+    #f4691d;
 }
 
 .modal-backdrop {

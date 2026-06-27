@@ -66,6 +66,7 @@ function normalizeData(data) {
     sharedNoteMeta: normalizeObject(data?.sharedNoteMeta),
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
+    iconPositions: normalizeIconPositions(data?.iconPositions),
   };
 }
 
@@ -79,6 +80,28 @@ function normalizeItems(items) {
 
 function normalizeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeIconPositions(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, position]) => [
+        id,
+        {
+          x: clampIconCoordinate(position?.x),
+          y: clampIconCoordinate(position?.y),
+        },
+      ])
+      .filter(([, position]) => position.x || position.y),
+  );
+}
+
+function clampIconCoordinate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(-900, Math.min(900, Math.round(number)));
 }
 
 function normalizeWallpaper(value) {

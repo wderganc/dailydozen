@@ -55,6 +55,7 @@ const REMOTE_SYNC_INTERVAL_MS = 15000;
 const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
 const DEFAULT_WALLPAPER_MODE = "tile";
+const KIMCHI_QUEST_MAX_BITES = 5;
 
 const app = document.querySelector("#app");
 let remoteSaveTimer;
@@ -72,8 +73,9 @@ const state = {
   remoteStatus: "checking",
   remoteError: "",
   crtEnabled: loadCrtPreference(),
-  iconPositions: loadIconPositions(),
   messageReads: loadMessageReads(),
+  kimchiQuestOpen: false,
+  kimchiQuestBites: 0,
 };
 
 function loadIconPositions() {
@@ -101,10 +103,6 @@ function clampIconCoordinate(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
   return Math.max(-900, Math.min(900, Math.round(number)));
-}
-
-function saveIconPositions() {
-  localStorage.setItem(ICON_POSITIONS_KEY, JSON.stringify(state.iconPositions));
 }
 
 function loadMessageReads() {
@@ -159,6 +157,7 @@ function getDefaultData() {
     sharedNoteMeta: {},
     wallpaper: "",
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
+    iconPositions: {},
   };
 }
 
@@ -177,6 +176,7 @@ function loadData() {
       sharedNoteMeta: parsed.sharedNoteMeta || {},
       wallpaper: normalizeWallpaper(parsed.wallpaper),
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
+      iconPositions: normalizeIconPositions(parsed.iconPositions || loadIconPositions()),
     };
   } catch {
     return fallback;
@@ -192,7 +192,24 @@ function normalizeData(data) {
     sharedNoteMeta: data?.sharedNoteMeta && typeof data.sharedNoteMeta === "object" ? data.sharedNoteMeta : {},
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
+    iconPositions: normalizeIconPositions(data?.iconPositions),
   };
+}
+
+function normalizeIconPositions(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, position]) => [
+        id,
+        {
+          x: clampIconCoordinate(position?.x),
+          y: clampIconCoordinate(position?.y),
+        },
+      ])
+      .filter(([, position]) => position.x || position.y),
+  );
 }
 
 function normalizeWallpaper(value) {
@@ -337,7 +354,12 @@ function mergeData(remoteData, localData) {
     },
     wallpaper: remote.wallpaper || local.wallpaper || "",
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
+    iconPositions: hasIconPositions(remote.iconPositions) ? remote.iconPositions : local.iconPositions,
   };
+}
+
+function hasIconPositions(iconPositions) {
+  return Object.keys(iconPositions || {}).length > 0;
 }
 
 function mergeNestedObjects(base, override) {
@@ -379,6 +401,7 @@ function hasLocalActivity(data) {
     Object.keys(data.notes || {}).length > 0 ||
     Object.keys(data.sharedNotes || {}).length > 0 ||
     Object.keys(data.sharedNoteMeta || {}).length > 0 ||
+    hasIconPositions(data.iconPositions) ||
     Boolean(data.wallpaper) ||
     data.wallpaperMode === "fill"
   );
@@ -560,7 +583,7 @@ function updateSharedMessageIndicator() {
   if (from) from.textContent = status.unread ? `From ${status.from}` : "For both of you";
 
   const title = document.querySelector("[data-shared-message-title]");
-  if (title) title.textContent = status.unread ? "1 new message" : "Shared note";
+  if (title) title.textContent = status.unread ? "1 new message!" : "Shared note";
 
   const meta = document.querySelector("[data-shared-message-meta]");
   if (meta) meta.textContent = status.editedAt ? `Last edited ${status.editedAt}` : "";
@@ -650,13 +673,13 @@ function renderMacShell(content) {
 
         <div class="desktop-icons">
           <button class="desktop-icon desktop-drop-target" type="button" data-desktop-icon="daily-dozen-hd" data-background-drop aria-label="Choose or drop a shared desktop background image" title="Drop an image here to change the shared desktop background" style="${getDesktopIconStyle("daily-dozen-hd")}">
-            <span class="icon-drive"></span>
+            <span class="icon-daily-dozen"></span>
             <strong>Daily Dozen HD</strong>
           </button>
-          <div class="desktop-icon" data-desktop-icon="kimchi-quest" style="${getDesktopIconStyle("kimchi-quest")}">
+          <button class="desktop-icon" type="button" data-desktop-icon="kimchi-quest" data-open-kimchi-quest aria-label="Open Kimchi Quest" style="${getDesktopIconStyle("kimchi-quest")}">
             <span class="icon-kimchi"></span>
             <strong>Kimchi Quest</strong>
-          </div>
+          </button>
           <div class="desktop-icon" data-desktop-icon="bird-calls" style="${getDesktopIconStyle("bird-calls")}">
             <span class="icon-bird"></span>
             <strong>Bird Calls</strong>
@@ -688,6 +711,7 @@ function renderMacShell(content) {
         </div>
 
         ${content}
+        ${state.kimchiQuestOpen ? renderKimchiQuestWindow() : ""}
       </div>
     </div>
   `;
@@ -708,7 +732,7 @@ function getDesktopBackground() {
 }
 
 function getDesktopIconStyle(id) {
-  const position = state.iconPositions[id];
+  const position = state.data.iconPositions?.[id];
   if (!position) return "";
   return `--icon-x: ${position.x}px; --icon-y: ${position.y}px;`;
 }
@@ -855,7 +879,7 @@ function renderDashboard(user) {
           <div class="note-block note-block-shared ${sharedStatus.unread ? "has-unread" : ""} mac-window" data-window-title="Shared Note" data-shared-message-state="${sharedStatus.unread ? "unread" : "read"}">
             <div class="section-heading">
               <p class="eyebrow" data-shared-message-from>${sharedStatus.unread ? `From ${escapeHtml(sharedStatus.from)}` : "For both of you"}</p>
-              <h2 data-shared-message-title>${sharedStatus.unread ? "1 new message" : "Shared note"}</h2>
+              <h2 data-shared-message-title>${sharedStatus.unread ? "1 new message!" : "Shared note"}</h2>
               <p class="message-meta" data-shared-message-meta>${sharedStatus.editedAt ? `Last edited ${escapeHtml(sharedStatus.editedAt)}` : ""}</p>
             </div>
             <textarea data-shared-note maxlength="360" placeholder="Leave a note you both can see.">${escapeHtml(getSharedNote())}</textarea>
@@ -940,6 +964,32 @@ function renderSettings() {
   `;
 }
 
+function renderKimchiQuestWindow() {
+  const bites = Math.max(0, Math.min(KIMCHI_QUEST_MAX_BITES, state.kimchiQuestBites));
+  const bitesLeft = KIMCHI_QUEST_MAX_BITES - bites;
+  const won = bites >= KIMCHI_QUEST_MAX_BITES;
+
+  return `
+    <section class="kimchi-game-window mac-window" data-window-title="Kimchi Quest" role="dialog" aria-labelledby="kimchi-quest-title">
+      <button class="window-close" type="button" data-close-kimchi-quest aria-label="Close Kimchi Quest" title="Close">×</button>
+      <div class="kimchi-game-copy">
+        <p class="eyebrow">play the game</p>
+        <h2 id="kimchi-quest-title">${won ? "Jar cleared" : "Eat the kimchi"}</h2>
+        <p>${won ? "You won. The jar is gloriously empty." : `${bitesLeft} bite${bitesLeft === 1 ? "" : "s"} left.`}</p>
+      </div>
+      <button class="kimchi-jar-button" type="button" data-kimchi-jar aria-label="${won ? "Kimchi jar is empty" : "Eat some kimchi"}" ${won ? "disabled" : ""}>
+        <span class="kimchi-jar" data-bites="${bites}" aria-hidden="true">
+          <span class="kimchi-fill"></span>
+        </span>
+      </button>
+      <div class="kimchi-game-meter" aria-label="${bites} of ${KIMCHI_QUEST_MAX_BITES} bites eaten">
+        ${Array.from({ length: KIMCHI_QUEST_MAX_BITES }, (_, index) => `<span class="${index < bites ? "is-eaten" : ""}"></span>`).join("")}
+      </div>
+      ${won ? `<button class="secondary-button" type="button" data-reset-kimchi-quest>Play again</button>` : ""}
+    </section>
+  `;
+}
+
 function bindEvents() {
   document.querySelectorAll("[data-login-user]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -998,6 +1048,7 @@ function bindEvents() {
 
   bindDesktopBackgroundEvents();
   bindDesktopIconDragging();
+  bindKimchiQuestEvents();
 
   document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
     toggleWallpaperMode();
@@ -1055,6 +1106,36 @@ function bindEvents() {
   document.querySelector("[data-reset-items]")?.addEventListener("click", () => {
     state.data.items = DEFAULT_ITEMS;
     saveData();
+    render();
+  });
+}
+
+function bindKimchiQuestEvents() {
+  const icon = document.querySelector("[data-open-kimchi-quest]");
+
+  icon?.addEventListener("click", () => {
+    if (icon.dataset.dragMoved === "true") {
+      icon.dataset.dragMoved = "";
+      return;
+    }
+
+    state.kimchiQuestOpen = true;
+    state.kimchiQuestBites = 0;
+    render();
+  });
+
+  document.querySelector("[data-close-kimchi-quest]")?.addEventListener("click", () => {
+    state.kimchiQuestOpen = false;
+    render();
+  });
+
+  document.querySelector("[data-kimchi-jar]")?.addEventListener("click", () => {
+    state.kimchiQuestBites = Math.min(KIMCHI_QUEST_MAX_BITES, state.kimchiQuestBites + 1);
+    render();
+  });
+
+  document.querySelector("[data-reset-kimchi-quest]")?.addEventListener("click", () => {
+    state.kimchiQuestBites = 0;
     render();
   });
 }
@@ -1117,7 +1198,7 @@ function bindDesktopIconDragging() {
       if (event.button !== 0) return;
 
       const id = icon.dataset.desktopIcon;
-      const position = state.iconPositions[id] || { x: 0, y: 0 };
+      const position = state.data.iconPositions?.[id] || { x: 0, y: 0 };
       pointerId = event.pointerId;
       startX = event.clientX;
       startY = event.clientY;
@@ -1161,12 +1242,14 @@ function finishIconDrag(icon, moved) {
   const id = icon.dataset.desktopIcon;
   const x = clampIconCoordinate(icon.style.getPropertyValue("--icon-x").replace("px", ""));
   const y = clampIconCoordinate(icon.style.getPropertyValue("--icon-y").replace("px", ""));
-  state.iconPositions[id] = { x, y };
-  saveIconPositions();
+  state.data.iconPositions ||= {};
+  state.data.iconPositions[id] = { x, y };
+  saveData({ immediate: true });
 
-  if (icon.matches("[data-background-drop]")) {
-    icon.dataset.dragMoved = "true";
-  }
+  icon.dataset.dragMoved = "true";
+  window.setTimeout(() => {
+    icon.dataset.dragMoved = "";
+  }, 500);
 }
 
 function setIconOffset(icon, x, y) {
