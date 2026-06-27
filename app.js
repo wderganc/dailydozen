@@ -47,6 +47,7 @@ const ITEM_ICONS = [
 
 const STORAGE_KEY = "daily-dozen-state-v1";
 const SESSION_KEY = "daily-dozen-session-v1";
+const CRT_KEY = "daily-dozen-crt-v1";
 const API_STATE_URL = "/api/state";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 
@@ -65,7 +66,26 @@ const state = {
   remoteReady: false,
   remoteStatus: "checking",
   remoteError: "",
+  crtEnabled: loadCrtPreference(),
 };
+
+function loadCrtPreference() {
+  return localStorage.getItem(CRT_KEY) === "on";
+}
+
+function setCrtEnabled(enabled) {
+  state.crtEnabled = enabled;
+  localStorage.setItem(CRT_KEY, enabled ? "on" : "off");
+  updateCrtMode();
+}
+
+function updateCrtMode() {
+  document.body.classList.toggle("crt-on", state.crtEnabled);
+  document.querySelectorAll("[data-crt-toggle]").forEach((button) => {
+    button.textContent = state.crtEnabled ? "crt: on" : "crt: off";
+    button.setAttribute("aria-pressed", String(state.crtEnabled));
+  });
+}
 
 function getDefaultData() {
   return {
@@ -436,6 +456,7 @@ function renderLogin() {
         <p class="eyebrow">Private daily ledger</p>
         <h1>Daily Dozen</h1>
         <p class="dek">A symmetrical little ritual board for two separate check-ins.</p>
+        <button class="crt-toggle" type="button" data-crt-toggle aria-pressed="${state.crtEnabled}">${state.crtEnabled ? "crt: on" : "crt: off"}</button>
       </div>
 
       <form class="login-panel" data-login-form>
@@ -476,6 +497,7 @@ function renderDashboard(user) {
           </div>
         </div>
         <div class="header-actions">
+          <button class="crt-toggle" type="button" data-crt-toggle aria-pressed="${state.crtEnabled}">${state.crtEnabled ? "crt: on" : "crt: off"}</button>
           <button class="sync-pill" type="button" data-sync-now data-sync-status="${state.remoteStatus}" title="${escapeAttribute(state.remoteError || "Shared Cloudflare KV sync")}">${getSyncLabel()}</button>
           <button class="icon-button" type="button" data-open-settings aria-label="Edit dozen items" title="Edit dozen items">
             ${iconMarkup("edit")}
@@ -672,6 +694,12 @@ function bindEvents() {
     render();
   });
 
+  document.querySelectorAll("[data-crt-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setCrtEnabled(!state.crtEnabled);
+    });
+  });
+
   document.querySelector("[data-sync-now]")?.addEventListener("click", async () => {
     await saveRemoteData();
     await loadRemoteData({ renderAfter: Boolean(getUser()) });
@@ -738,5 +766,6 @@ function escapeAttribute(value) {
   return escapeHtml(value).replace(/`/g, "&#096;");
 }
 
+updateCrtMode();
 render();
 startRemoteSync();
