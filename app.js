@@ -426,8 +426,89 @@ function iconMarkup(name) {
 
 function render() {
   const user = getUser();
-  app.innerHTML = user ? renderDashboard(user) : renderLogin();
+  app.innerHTML = renderMacShell(user ? renderDashboard(user) : renderLogin());
   bindEvents();
+}
+
+function renderMacShell(content) {
+  return `
+    <div class="mac-shell">
+      <header class="system-menu" aria-hidden="true">
+        <div class="menu-mark">D12</div>
+        <div class="menu-items">
+          <span>File</span>
+          <span>Edit</span>
+          <span>View</span>
+          <span>Special</span>
+          <span>Help</span>
+        </div>
+        <time>${formatClassicTime(new Date())}</time>
+        <span class="system-glyph"></span>
+      </header>
+
+      <div class="desktop-surface">
+        <div class="apple-menu-card" aria-hidden="true">
+          <div>About Daily Dozen...</div>
+          <div class="menu-separator"></div>
+          <div>Daily Checklist</div>
+          <div>Shared Note</div>
+          <div>Progress Board</div>
+          <div class="menu-separator"></div>
+          <div>Control Panels</div>
+          <div>Find File</div>
+          <div>Stickies</div>
+        </div>
+
+        <div class="desktop-icons" aria-hidden="true">
+          <div class="desktop-icon">
+            <span class="icon-drive"></span>
+            <strong>Daily Dozen HD</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-kimchi"></span>
+            <strong>Kimchi Quest</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-bird"></span>
+            <strong>Bird Calls</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-folder"></span>
+            <strong>Claudia's Seed Collection</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-monkey"></span>
+            <strong>Monkey See Genevieve Do</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-ukulele"></span>
+            <strong>ULaylee</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-pencils"></span>
+            <strong>Colored Pencils</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-folder icon-folder-green"></span>
+            <strong>Genevieve's Seed Collection</strong>
+          </div>
+          <div class="desktop-icon">
+            <span class="icon-trash"></span>
+            <strong>Trash</strong>
+          </div>
+        </div>
+
+        ${content}
+      </div>
+    </div>
+  `;
+}
+
+function formatClassicTime(date) {
+  return new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function renderLogin() {
@@ -442,7 +523,7 @@ function renderLogin() {
   }).join("");
 
   return `
-    <section class="login-screen">
+    <section class="login-screen mac-program">
       <div class="login-illustration" aria-hidden="true">
         <div class="hotel-roof"></div>
         <div class="hotel-body">
@@ -452,14 +533,14 @@ function renderLogin() {
         <div class="hotel-awning"></div>
       </div>
 
-      <div class="login-copy">
-        <p class="eyebrow">Private daily ledger</p>
+      <div class="login-copy mac-window" data-window-title="Daily Dozen">
+        <p class="eyebrow">private daily ledger</p>
         <h1>Daily Dozen</h1>
-        <p class="dek">A symmetrical little ritual board for two separate check-ins.</p>
+        <p class="dek">Scotty P. / Claudie D.</p>
         <button class="crt-toggle" type="button" data-crt-toggle aria-pressed="${state.crtEnabled}">${state.crtEnabled ? "crt: on" : "crt: off"}</button>
       </div>
 
-      <form class="login-panel" data-login-form>
+      <form class="login-panel mac-window" data-window-title="Users" data-login-form>
         <div class="passport-row">
           ${userButtons}
         </div>
@@ -487,12 +568,12 @@ function renderDashboard(user) {
   const userItems = getCompletion(user.id);
 
   return `
-    <section class="dashboard">
-      <header class="app-header">
+    <section class="dashboard mac-program">
+      <header class="app-header mac-window" data-window-title="Daily Dozen">
         <div class="brand-lockup">
           <span class="brand-mark" aria-hidden="true">12</span>
           <div>
-            <p class="eyebrow">Daily Dozen</p>
+            <p class="eyebrow">daily dozen</p>
             <h1>${escapeHtml(user.name)}'s ledger</h1>
           </div>
         </div>
@@ -508,7 +589,7 @@ function renderDashboard(user) {
         </div>
       </header>
 
-      <nav class="date-strip" aria-label="Date">
+      <nav class="date-strip mac-window" data-window-title="Calendar" aria-label="Date">
         <button class="icon-button" type="button" data-date-offset="-1" aria-label="Previous day" title="Previous day">
           ${iconMarkup("chevronLeft")}
         </button>
@@ -525,7 +606,7 @@ function renderDashboard(user) {
         <button class="today-button" type="button" data-today>Today</button>
       </nav>
 
-      <section class="overview-band">
+      <section class="overview-band mac-window" data-window-title="Progress">
         <div class="progress-feature" style="--user-color: ${user.color}; --progress: ${progress.percentage}%">
           <div class="meter">
             <div class="meter-fill"></div>
@@ -543,7 +624,7 @@ function renderDashboard(user) {
       </section>
 
       <section class="work-area">
-        <div class="checklist-shell">
+        <div class="checklist-shell mac-window" data-window-title="Checklist">
           <div class="section-heading">
             <p class="eyebrow">${formatDate(state.selectedDate, "short")}</p>
             <h2>Check off your twelve</h2>
@@ -557,21 +638,21 @@ function renderDashboard(user) {
           <div class="mini-marquee" aria-hidden="true">
             <span></span><span></span><span></span><span></span>
           </div>
-          <div class="note-block note-block-shared">
+          <div class="note-block note-block-shared mac-window" data-window-title="Shared Note">
             <div class="section-heading">
               <p class="eyebrow">For both of you</p>
               <h2>Shared note</h2>
             </div>
             <textarea data-shared-note maxlength="360" placeholder="Leave a note you both can see.">${escapeHtml(getSharedNote())}</textarea>
           </div>
-          <div class="note-block">
+          <div class="note-block mac-window" data-window-title="Private Note">
             <div class="section-heading">
               <p class="eyebrow">Your note</p>
               <h2>Private line</h2>
             </div>
             <textarea data-note maxlength="240" placeholder="One sentence about today.">${escapeHtml(getNote(user.id))}</textarea>
           </div>
-          <div class="partner-glance">
+          <div class="partner-glance mac-window" data-window-title="Other User">
             <span style="--user-color: ${partner.color}"></span>
             <p>${escapeHtml(partner.name)} is at <strong>${getProgress(partner.id).count}/12</strong>.</p>
           </div>
@@ -613,7 +694,7 @@ function renderChecklistItem(item, index, checked) {
 function renderSettings() {
   return `
     <div class="modal-backdrop" data-close-settings>
-      <section class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section class="settings-panel mac-window" data-window-title="Control Panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div class="settings-header">
           <div>
             <p class="eyebrow">The twelve</p>
