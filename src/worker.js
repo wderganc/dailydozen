@@ -20,6 +20,8 @@ const JSON_HEADERS = {
   "Cache-Control": "no-store",
 };
 
+const DEFAULT_WALLPAPER_MODE = "tile";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -62,6 +64,7 @@ function normalizeData(data) {
     notes: normalizeObject(data?.notes),
     sharedNotes: normalizeObject(data?.sharedNotes),
     wallpaper: normalizeWallpaper(data?.wallpaper),
+    wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
   };
 }
 
@@ -80,6 +83,10 @@ function normalizeObject(value) {
 function normalizeWallpaper(value) {
   if (typeof value !== "string") return "";
   return value.startsWith("data:image/") ? value : "";
+}
+
+function normalizeWallpaperMode(value) {
+  return value === "fill" ? "fill" : DEFAULT_WALLPAPER_MODE;
 }
 
 function json(body, status = 200) {

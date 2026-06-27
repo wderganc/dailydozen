@@ -52,6 +52,7 @@ const API_STATE_URL = "/api/state";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
+const DEFAULT_WALLPAPER_MODE = "tile";
 
 const app = document.querySelector("#app");
 let remoteSaveTimer;
@@ -73,7 +74,14 @@ const state = {
 
 function setDesktopBackground(imageData) {
   state.data.wallpaper = imageData;
+  state.data.wallpaperMode ||= DEFAULT_WALLPAPER_MODE;
   saveData({ immediate: true });
+}
+
+function toggleWallpaperMode() {
+  state.data.wallpaperMode = getWallpaperMode() === "tile" ? "fill" : "tile";
+  saveData({ immediate: true });
+  render();
 }
 
 function loadCrtPreference() {
@@ -101,6 +109,7 @@ function getDefaultData() {
     notes: {},
     sharedNotes: {},
     wallpaper: "",
+    wallpaperMode: DEFAULT_WALLPAPER_MODE,
   };
 }
 
@@ -117,6 +126,7 @@ function loadData() {
       notes: parsed.notes || {},
       sharedNotes: parsed.sharedNotes || {},
       wallpaper: normalizeWallpaper(parsed.wallpaper),
+      wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
     };
   } catch {
     return fallback;
@@ -130,12 +140,17 @@ function normalizeData(data) {
     notes: data?.notes && typeof data.notes === "object" ? data.notes : {},
     sharedNotes: data?.sharedNotes && typeof data.sharedNotes === "object" ? data.sharedNotes : {},
     wallpaper: normalizeWallpaper(data?.wallpaper),
+    wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
   };
 }
 
 function normalizeWallpaper(value) {
   if (typeof value !== "string") return "";
   return value.startsWith("data:image/") ? value : "";
+}
+
+function normalizeWallpaperMode(value) {
+  return value === "fill" ? "fill" : DEFAULT_WALLPAPER_MODE;
 }
 
 function normalizeItems(items) {
@@ -266,6 +281,7 @@ function mergeData(remoteData, localData) {
       ...remote.sharedNotes,
     },
     wallpaper: remote.wallpaper || local.wallpaper || "",
+    wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
   };
 }
 
@@ -307,7 +323,8 @@ function hasLocalActivity(data) {
     Object.keys(data.completions || {}).length > 0 ||
     Object.keys(data.notes || {}).length > 0 ||
     Object.keys(data.sharedNotes || {}).length > 0 ||
-    Boolean(data.wallpaper)
+    Boolean(data.wallpaper) ||
+    data.wallpaperMode === "fill"
   );
 }
 
@@ -455,7 +472,7 @@ function renderMacShell(content) {
   return `
     <div class="mac-shell">
       <header class="system-menu" aria-hidden="true">
-        <div class="menu-mark">D12</div>
+        <div class="menu-mark"><span class="apple-pixel"></span></div>
         <div class="menu-items">
           <span>File</span>
           <span>Edit</span>
@@ -468,12 +485,13 @@ function renderMacShell(content) {
       </header>
 
       <div class="desktop-surface ${getDesktopBackground() ? "has-custom-wallpaper" : ""}" ${getDesktopBackgroundStyle()}>
-        <div class="apple-menu-card" aria-hidden="true">
+        <div class="apple-menu-card">
           <div>About Daily Dozen...</div>
           <div class="menu-separator"></div>
           <div>Daily Checklist</div>
           <div>Shared Note</div>
           <div>Progress Board</div>
+          <button type="button" data-wallpaper-mode>Wallpaper: ${getWallpaperMode() === "tile" ? "Tile" : "Fill"}</button>
           <div class="menu-separator"></div>
           <div>Control Panels</div>
           <div>Find File</div>
@@ -530,11 +548,19 @@ function renderMacShell(content) {
 function getDesktopBackgroundStyle() {
   const background = getDesktopBackground();
   if (!background) return "";
-  return `style="--custom-wallpaper: url(${escapeAttribute(background)})"`;
+  const mode = getWallpaperMode();
+  const repeat = mode === "tile" ? "repeat" : "no-repeat";
+  const size = mode === "tile" ? "240px auto" : "cover";
+  const position = mode === "tile" ? "0 0" : "center";
+  return `style="--custom-wallpaper: url(${escapeAttribute(background)}); --wallpaper-repeat: ${repeat}; --wallpaper-size: ${size}; --wallpaper-position: ${position}"`;
 }
 
 function getDesktopBackground() {
   return state.data.wallpaper || "";
+}
+
+function getWallpaperMode() {
+  return normalizeWallpaperMode(state.data.wallpaperMode);
 }
 
 function formatClassicTime(date) {
@@ -815,6 +841,10 @@ function bindEvents() {
   });
 
   bindDesktopBackgroundEvents();
+
+  document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
+    toggleWallpaperMode();
+  });
 
   document.querySelector("[data-sync-now]")?.addEventListener("click", async () => {
     await saveRemoteData();

@@ -20,6 +20,8 @@ const HEADERS = {
   "Cache-Control": "no-store",
 };
 
+const DEFAULT_WALLPAPER_MODE = "tile";
+
 export async function onRequestGet({ env }) {
   const store = getStore(env);
   if (!store) return json({ error: "Daily Dozen KV binding is missing." }, 500);
@@ -53,6 +55,7 @@ function normalizeData(data) {
     notes: normalizeObject(data?.notes),
     sharedNotes: normalizeObject(data?.sharedNotes),
     wallpaper: normalizeWallpaper(data?.wallpaper),
+    wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
   };
 }
 
@@ -71,6 +74,10 @@ function normalizeObject(value) {
 function normalizeWallpaper(value) {
   if (typeof value !== "string") return "";
   return value.startsWith("data:image/") ? value : "";
+}
+
+function normalizeWallpaperMode(value) {
+  return value === "fill" ? "fill" : DEFAULT_WALLPAPER_MODE;
 }
 
 function json(body, status = 200) {
