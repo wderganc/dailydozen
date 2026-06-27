@@ -52,6 +52,7 @@ function normalizeData(data) {
     completions: normalizeObject(data?.completions),
     notes: normalizeObject(data?.notes),
     sharedNotes: normalizeObject(data?.sharedNotes),
+    wallpaper: normalizeWallpaper(data?.wallpaper),
   };
 }
 
@@ -65,6 +66,11 @@ function normalizeItems(items) {
 
 function normalizeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeWallpaper(value) {
+  if (typeof value !== "string") return "";
+  return value.startsWith("data:image/") ? value : "";
 }
 
 function json(body, status = 200) {

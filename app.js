@@ -50,6 +50,8 @@ const SESSION_KEY = "daily-dozen-session-v1";
 const CRT_KEY = "daily-dozen-crt-v1";
 const API_STATE_URL = "/api/state";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
+const WALLPAPER_MAX_SIDE = 1400;
+const WALLPAPER_JPEG_QUALITY = 0.78;
 
 const app = document.querySelector("#app");
 let remoteSaveTimer;
@@ -68,6 +70,11 @@ const state = {
   remoteError: "",
   crtEnabled: loadCrtPreference(),
 };
+
+function setDesktopBackground(imageData) {
+  state.data.wallpaper = imageData;
+  saveData({ immediate: true });
+}
 
 function loadCrtPreference() {
   return localStorage.getItem(CRT_KEY) === "on";
@@ -93,6 +100,7 @@ function getDefaultData() {
     completions: {},
     notes: {},
     sharedNotes: {},
+    wallpaper: "",
   };
 }
 
@@ -108,6 +116,7 @@ function loadData() {
       completions: parsed.completions || {},
       notes: parsed.notes || {},
       sharedNotes: parsed.sharedNotes || {},
+      wallpaper: normalizeWallpaper(parsed.wallpaper),
     };
   } catch {
     return fallback;
@@ -120,7 +129,13 @@ function normalizeData(data) {
     completions: data?.completions && typeof data.completions === "object" ? data.completions : {},
     notes: data?.notes && typeof data.notes === "object" ? data.notes : {},
     sharedNotes: data?.sharedNotes && typeof data.sharedNotes === "object" ? data.sharedNotes : {},
+    wallpaper: normalizeWallpaper(data?.wallpaper),
   };
+}
+
+function normalizeWallpaper(value) {
+  if (typeof value !== "string") return "";
+  return value.startsWith("data:image/") ? value : "";
 }
 
 function normalizeItems(items) {
@@ -130,7 +145,11 @@ function normalizeItems(items) {
 }
 
 function saveLocalData() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+  } catch {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.data, wallpaper: "" }));
+  }
 }
 
 function saveData({ immediate = false } = {}) {
@@ -246,6 +265,7 @@ function mergeData(remoteData, localData) {
       ...local.sharedNotes,
       ...remote.sharedNotes,
     },
+    wallpaper: remote.wallpaper || local.wallpaper || "",
   };
 }
 
@@ -286,7 +306,8 @@ function hasLocalActivity(data) {
     !areDefaultItems(data.items) ||
     Object.keys(data.completions || {}).length > 0 ||
     Object.keys(data.notes || {}).length > 0 ||
-    Object.keys(data.sharedNotes || {}).length > 0
+    Object.keys(data.sharedNotes || {}).length > 0 ||
+    Boolean(data.wallpaper)
   );
 }
 
@@ -446,7 +467,7 @@ function renderMacShell(content) {
         <span class="system-glyph"></span>
       </header>
 
-      <div class="desktop-surface">
+      <div class="desktop-surface ${getDesktopBackground() ? "has-custom-wallpaper" : ""}" ${getDesktopBackgroundStyle()}>
         <div class="apple-menu-card" aria-hidden="true">
           <div>About Daily Dozen...</div>
           <div class="menu-separator"></div>
@@ -459,11 +480,13 @@ function renderMacShell(content) {
           <div>Stickies</div>
         </div>
 
-        <div class="desktop-icons" aria-hidden="true">
-          <div class="desktop-icon">
+        <input class="background-file-input" type="file" accept="image/*" data-background-file />
+
+        <div class="desktop-icons">
+          <button class="desktop-icon desktop-drop-target" type="button" data-background-drop aria-label="Choose or drop a shared desktop background image" title="Drop an image here to change the shared desktop background">
             <span class="icon-drive"></span>
             <strong>Daily Dozen HD</strong>
-          </div>
+          </button>
           <div class="desktop-icon">
             <span class="icon-kimchi"></span>
             <strong>Kimchi Quest</strong>
@@ -502,6 +525,16 @@ function renderMacShell(content) {
       </div>
     </div>
   `;
+}
+
+function getDesktopBackgroundStyle() {
+  const background = getDesktopBackground();
+  if (!background) return "";
+  return `style="--custom-wallpaper: url(${escapeAttribute(background)})"`;
+}
+
+function getDesktopBackground() {
+  return state.data.wallpaper || "";
 }
 
 function formatClassicTime(date) {
@@ -781,6 +814,8 @@ function bindEvents() {
     });
   });
 
+  bindDesktopBackgroundEvents();
+
   document.querySelector("[data-sync-now]")?.addEventListener("click", async () => {
     await saveRemoteData();
     await loadRemoteData({ renderAfter: Boolean(getUser()) });
@@ -832,6 +867,72 @@ function bindEvents() {
     saveData();
     render();
   });
+}
+
+function bindDesktopBackgroundEvents() {
+  const dropTarget = document.querySelector("[data-background-drop]");
+  const fileInput = document.querySelector("[data-background-file]");
+
+  if (!dropTarget || !fileInput) return;
+
+  dropTarget.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) {
+      setDesktopBackgroundFromFile(file);
+      fileInput.value = "";
+    }
+  });
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    dropTarget.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      dropTarget.classList.add("is-drag-over");
+    });
+  });
+
+  ["dragleave", "dragend"].forEach((eventName) => {
+    dropTarget.addEventListener(eventName, () => {
+      dropTarget.classList.remove("is-drag-over");
+    });
+  });
+
+  dropTarget.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropTarget.classList.remove("is-drag-over");
+
+    const file = event.dataTransfer?.files?.[0];
+    if (file) setDesktopBackgroundFromFile(file);
+  });
+}
+
+function setDesktopBackgroundFromFile(file) {
+  if (!file.type.startsWith("image/")) return;
+
+  const reader = new FileReader();
+
+  reader.addEventListener("load", () => {
+    const image = new Image();
+
+    image.addEventListener("load", () => {
+      const scale = Math.min(1, WALLPAPER_MAX_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      setDesktopBackground(canvas.toDataURL("image/jpeg", WALLPAPER_JPEG_QUALITY));
+      render();
+    });
+
+    image.src = reader.result;
+  });
+
+  reader.readAsDataURL(file);
 }
 
 function escapeHtml(value) {
