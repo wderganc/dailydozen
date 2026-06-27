@@ -56,10 +56,30 @@ const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
 const DEFAULT_WALLPAPER_MODE = "tile";
 const KIMCHI_QUEST_MAX_BITES = 5;
+const MONKEY_SOUND_URL = "assets/monkey-sfx.wav";
+const UKULELE_VIDEOS = [
+  {
+    watch: "https://www.youtube.com/watch?v=Xl-BNTeJXjw",
+    embed: "https://www.youtube.com/embed/Xl-BNTeJXjw?autoplay=1&rel=0",
+  },
+  {
+    watch: "https://www.youtube.com/watch?v=iMJEtLjnO7E",
+    embed: "https://www.youtube.com/embed/iMJEtLjnO7E?autoplay=1&rel=0",
+  },
+];
+const CLAUDIA_SEEDS = [
+  { name: "Cosmos", tag: "annual", tone: "pink" },
+  { name: "Basil", tag: "herb", tone: "green" },
+  { name: "Zinnia", tag: "summer", tone: "orange" },
+  { name: "Nasturtium", tag: "edible", tone: "yellow" },
+  { name: "Lavender", tag: "perennial", tone: "purple" },
+  { name: "Sunflower", tag: "tall", tone: "gold" },
+];
 
 const app = document.querySelector("#app");
 let remoteSaveTimer;
 let remoteSyncTimer;
+let monkeySound;
 
 const state = {
   currentUserId: sessionStorage.getItem(SESSION_KEY),
@@ -76,6 +96,9 @@ const state = {
   messageReads: loadMessageReads(),
   kimchiQuestOpen: false,
   kimchiQuestBites: 0,
+  ukuleleWindowOpen: false,
+  ukuleleVideoIndex: 0,
+  seedWindow: "",
 };
 
 function loadIconPositions() {
@@ -304,7 +327,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false } = {}) 
       scheduleRemoteSave();
     }
 
-    if (renderAfter && !isTextEditing()) {
+    if (renderAfter && !isTextEditing() && !state.ukuleleWindowOpen) {
       render();
     } else {
       updateSyncIndicator();
@@ -684,26 +707,26 @@ function renderMacShell(content) {
             <span class="icon-bird"></span>
             <strong>Bird Calls</strong>
           </div>
-          <div class="desktop-icon" data-desktop-icon="claudias-seed-collection" style="${getDesktopIconStyle("claudias-seed-collection")}">
+          <button class="desktop-icon" type="button" data-desktop-icon="claudias-seed-collection" data-open-seed-window="claudia" aria-label="Open Claudia's Seed Collection" style="${getDesktopIconStyle("claudias-seed-collection")}">
             <span class="icon-folder"></span>
             <strong>Claudia's Seed Collection</strong>
-          </div>
-          <div class="desktop-icon" data-desktop-icon="monkey-see-genevieve-do" style="${getDesktopIconStyle("monkey-see-genevieve-do")}">
+          </button>
+          <button class="desktop-icon" type="button" data-desktop-icon="monkey-see-genevieve-do" data-play-monkey-sfx aria-label="Play Monkey See Genevieve Do sound" style="${getDesktopIconStyle("monkey-see-genevieve-do")}">
             <span class="icon-monkey"></span>
             <strong>Monkey See Genevieve Do</strong>
-          </div>
-          <div class="desktop-icon" data-desktop-icon="ulaylee" style="${getDesktopIconStyle("ulaylee")}">
+          </button>
+          <button class="desktop-icon" type="button" data-desktop-icon="ulaylee" data-open-ukulele aria-label="Open ULaylee" style="${getDesktopIconStyle("ulaylee")}">
             <span class="icon-ukulele"></span>
             <strong>ULaylee</strong>
-          </div>
+          </button>
           <div class="desktop-icon" data-desktop-icon="colored-pencils" style="${getDesktopIconStyle("colored-pencils")}">
             <span class="icon-pencils"></span>
             <strong>Colored Pencils</strong>
           </div>
-          <div class="desktop-icon" data-desktop-icon="genevieves-seed-collection" style="${getDesktopIconStyle("genevieves-seed-collection")}">
+          <button class="desktop-icon" type="button" data-desktop-icon="genevieves-seed-collection" data-open-seed-window="genevieve" aria-label="Open Genevieve's Seed Collection" style="${getDesktopIconStyle("genevieves-seed-collection")}">
             <span class="icon-folder icon-folder-green"></span>
             <strong>Genevieve's Seed Collection</strong>
-          </div>
+          </button>
           <div class="desktop-icon" data-desktop-icon="trash" style="${getDesktopIconStyle("trash")}">
             <span class="icon-trash"></span>
             <strong>Trash</strong>
@@ -712,6 +735,8 @@ function renderMacShell(content) {
 
         ${content}
         ${state.kimchiQuestOpen ? renderKimchiQuestWindow() : ""}
+        ${state.ukuleleWindowOpen ? renderUkuleleWindow() : ""}
+        ${state.seedWindow ? renderSeedWindow(state.seedWindow) : ""}
       </div>
     </div>
   `;
@@ -990,6 +1015,70 @@ function renderKimchiQuestWindow() {
   `;
 }
 
+function renderUkuleleWindow() {
+  const video = UKULELE_VIDEOS[state.ukuleleVideoIndex] || UKULELE_VIDEOS[0];
+
+  return `
+    <section class="youtube-window mac-window" data-window-title="ULaylee" role="dialog" aria-labelledby="ukulele-title">
+      <button class="window-close" type="button" data-close-ukulele aria-label="Close ULaylee" title="Close">×</button>
+      <h2 id="ukulele-title" class="youtube-window-title">ULaylee</h2>
+      <div class="youtube-frame-shell">
+        <iframe src="${escapeAttribute(video.embed)}" title="ULaylee YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      </div>
+      <a class="youtube-source-link" href="${escapeAttribute(video.watch)}" target="_blank" rel="noopener">Open on YouTube</a>
+    </section>
+  `;
+}
+
+function renderSeedWindow(owner) {
+  const isClaudia = owner === "claudia";
+  const title = isClaudia ? "Claudia's Seed Collection" : "Genevieve's Seed Collection";
+
+  return `
+    <section class="seed-window ${isClaudia ? "seed-window-claudia" : "seed-window-genevieve"} mac-window" data-window-title="${escapeAttribute(title)}" role="dialog" aria-labelledby="seed-window-title">
+      <button class="window-close" type="button" data-close-seed-window aria-label="Close ${escapeAttribute(title)}" title="Close">×</button>
+      <div class="seed-window-header">
+        <p class="eyebrow">${isClaudia ? "cataloged packets" : "field notes"}</p>
+        <h2 id="seed-window-title">${escapeHtml(title)}</h2>
+      </div>
+      ${isClaudia ? renderClaudiaSeeds() : renderGenevieveSeeds()}
+    </section>
+  `;
+}
+
+function renderClaudiaSeeds() {
+  return `
+    <div class="seed-catalog">
+      ${CLAUDIA_SEEDS.map(
+        (seed, index) => `
+          <article class="seed-packet seed-tone-${seed.tone}">
+            <span class="seed-index">${String(index + 1).padStart(2, "0")}</span>
+            <strong>${escapeHtml(seed.name)}</strong>
+            <span>${escapeHtml(seed.tag)}</span>
+          </article>
+        `,
+      ).join("")}
+    </div>
+  `;
+}
+
+function renderGenevieveSeeds() {
+  return `
+    <div class="seed-scatter" aria-label="Scattered seeds, hair ties, and a smiley note">
+      <span class="loose-seed loose-seed-1"></span>
+      <span class="loose-seed loose-seed-2"></span>
+      <span class="loose-seed loose-seed-3"></span>
+      <span class="loose-seed loose-seed-4"></span>
+      <span class="loose-seed loose-seed-5"></span>
+      <span class="loose-seed loose-seed-6"></span>
+      <span class="loose-seed loose-seed-7"></span>
+      <span class="hair-tie hair-tie-1"></span>
+      <span class="hair-tie hair-tie-2"></span>
+      <span class="smiley-note" aria-hidden="true">:)</span>
+    </div>
+  `;
+}
+
 function bindEvents() {
   document.querySelectorAll("[data-login-user]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1049,6 +1138,9 @@ function bindEvents() {
   bindDesktopBackgroundEvents();
   bindDesktopIconDragging();
   bindKimchiQuestEvents();
+  bindUkuleleEvents();
+  bindSeedWindowEvents();
+  bindMonkeySoundEvents();
 
   document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
     toggleWallpaperMode();
@@ -1106,6 +1198,64 @@ function bindEvents() {
   document.querySelector("[data-reset-items]")?.addEventListener("click", () => {
     state.data.items = DEFAULT_ITEMS;
     saveData();
+    render();
+  });
+}
+
+function bindMonkeySoundEvents() {
+  const icon = document.querySelector("[data-play-monkey-sfx]");
+
+  icon?.addEventListener("click", () => {
+    if (icon.dataset.dragMoved === "true") {
+      icon.dataset.dragMoved = "";
+      return;
+    }
+
+    playMonkeySound();
+  });
+}
+
+function playMonkeySound() {
+  monkeySound ||= new Audio(MONKEY_SOUND_URL);
+  monkeySound.currentTime = 0;
+  monkeySound.play().catch(() => {});
+}
+
+function bindSeedWindowEvents() {
+  document.querySelectorAll("[data-open-seed-window]").forEach((icon) => {
+    icon.addEventListener("click", () => {
+      if (icon.dataset.dragMoved === "true") {
+        icon.dataset.dragMoved = "";
+        return;
+      }
+
+      state.seedWindow = icon.dataset.openSeedWindow;
+      render();
+    });
+  });
+
+  document.querySelector("[data-close-seed-window]")?.addEventListener("click", () => {
+    state.seedWindow = "";
+    render();
+  });
+}
+
+function bindUkuleleEvents() {
+  const icon = document.querySelector("[data-open-ukulele]");
+
+  icon?.addEventListener("click", () => {
+    if (icon.dataset.dragMoved === "true") {
+      icon.dataset.dragMoved = "";
+      return;
+    }
+
+    state.ukuleleVideoIndex = Math.floor(Math.random() * UKULELE_VIDEOS.length);
+    state.ukuleleWindowOpen = true;
+    render();
+  });
+
+  document.querySelector("[data-close-ukulele]")?.addEventListener("click", () => {
+    state.ukuleleWindowOpen = false;
     render();
   });
 }
