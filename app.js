@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-27 02:58:54 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-27 03:06:59 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const WALLPAPER_MAX_SIDE = 1400;
 const WALLPAPER_JPEG_QUALITY = 0.78;
@@ -443,6 +443,11 @@ async function saveRemoteData() {
     });
 
     if (!response.ok) throw new Error(`Remote save failed: ${response.status}`);
+    const savedPayload = await response.json().catch(() => null);
+    const savedData = normalizeData(savedPayload?.data);
+    state.data.desktopPictures = mergeDesktopPictures(savedData.desktopPictures, state.data.desktopPictures);
+    state.data.facetimeVideos = mergeFacetimeVideos(savedData.facetimeVideos, state.data.facetimeVideos);
+    saveLocalData();
     state.remoteReady = true;
     state.remoteStatus = "synced";
     state.remoteError = "";
@@ -2437,8 +2442,12 @@ async function addDesktopPictureFromFile(file) {
 
   state.data.desktopPictures = mergeDesktopPictures(state.data.desktopPictures, [picture]);
   state.pictureWindowId = id;
-  saveData({ immediate: true });
+  saveLocalData();
   render();
+
+  await saveRemoteData();
+  if (!state.remoteReady) scheduleRemoteSave();
+  if (getDesktopPicture(id)) render();
 }
 
 function isImageFile(file) {

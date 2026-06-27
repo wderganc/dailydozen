@@ -1,5 +1,6 @@
 const STORAGE_KEY = "state:v1";
 const FACETIME_VIDEO_KEY_PREFIX = "facetime-video:v1:";
+const DESKTOP_PICTURE_KEY_PREFIX = "desktop-picture:v1:";
 
 const DEFAULT_ITEMS = [
   "Exercise",
@@ -46,7 +47,9 @@ export async function onRequestPost({ request, env }) {
     const incomingData = normalizeData(payload.data);
     const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"));
     const facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos);
-    const data = mergeStoredData(storedData, incomingData, facetimeVideos);
+    const desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures);
+    const data = mergeStoredData(storedData, incomingData, facetimeVideos, desktopPictures);
+    await putDesktopPictures(store, desktopPictures);
     await putFacetimeVideos(store, facetimeVideos);
     await store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data)));
     return json({ data });
@@ -75,20 +78,28 @@ function normalizeData(data) {
 }
 
 async function hydrateStoredData(store, stored) {
+  const storedPictureMeta = normalizeDesktopPictureMetadataList(stored?.desktopPictures);
   const stateData = normalizeData(stored);
+  const storedPictures = await getStoredDesktopPictures(store, storedPictureMeta);
   const storedVideos = await getStoredFacetimeVideos(store);
 
   return {
     ...stateData,
+    desktopPictures: mergeDesktopPictures(stateData.desktopPictures, storedPictures),
     facetimeVideos: mergeFacetimeVideos(stateData.facetimeVideos, storedVideos),
   };
 }
 
-function mergeStoredData(storedData, incomingData, facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos)) {
+function mergeStoredData(
+  storedData,
+  incomingData,
+  facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos),
+  desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures),
+) {
   return {
     ...incomingData,
     iconPositions: mergeIconPositions(storedData.iconPositions, incomingData.iconPositions),
-    desktopPictures: mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures),
+    desktopPictures,
     facetimeVideos,
   };
 }
@@ -96,6 +107,7 @@ function mergeStoredData(storedData, incomingData, facetimeVideos = mergeFacetim
 function getStateDataForStorage(data) {
   return {
     ...data,
+    desktopPictures: getDesktopPictureMetadataList(data.desktopPictures),
     facetimeVideos: {},
   };
 }
@@ -138,6 +150,56 @@ function normalizeDesktopPicture(value) {
     uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
     uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
   };
+}
+
+function normalizeDesktopPictureMetadataList(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map(normalizeDesktopPictureMetadata)
+    .filter((picture) => picture.id)
+    .slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function normalizeDesktopPictureMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return {
+    id: normalizeShortText(value.id, "", 96),
+    name: normalizeShortText(value.name, "Picture", 96),
+    type: normalizeShortText(value.type, "image/jpeg", 48),
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
+  };
+}
+
+function getDesktopPictureMetadataList(pictures) {
+  return normalizeDesktopPictures(pictures).map(({ data, ...picture }) => picture);
+}
+
+async function getStoredDesktopPictures(store, pictureMeta) {
+  const entries = await Promise.all(
+    normalizeDesktopPictureMetadataList(pictureMeta).map(async (meta) => {
+      const stored = await store.get(getDesktopPictureKey(meta.id), "json");
+      const picture = normalizeDesktopPicture({ ...meta, ...(stored || {}) });
+      return picture;
+    }),
+  );
+
+  return entries.filter((picture) => picture.id && picture.data);
+}
+
+async function putDesktopPictures(store, pictures) {
+  await Promise.all(
+    normalizeDesktopPictures(pictures).map((picture) => {
+      return store.put(getDesktopPictureKey(picture.id), JSON.stringify(picture));
+    }),
+  );
+}
+
+function getDesktopPictureKey(id) {
+  return `${DESKTOP_PICTURE_KEY_PREFIX}${encodeURIComponent(id)}`;
 }
 
 function mergeDesktopPictures(storedPictures, incomingPictures) {
