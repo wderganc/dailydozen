@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-27 09:51:37 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-27 10:44:04 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -1036,7 +1036,7 @@ async function loadFacetimeArchive(userId, { renderAfter = false, force = false 
       state.remoteError = "";
 
       if (renderAfter && state.facetimeArchiveOpen && getFacetimeArchiveOwner()?.id === userId) {
-        render();
+        mountFacetimeArchiveWindow();
       } else {
         updateSyncIndicator();
       }
@@ -1089,7 +1089,7 @@ async function loadFacetimeArchiveVideo(userId, videoId, { renderAfter = false }
       state.remoteError = "";
 
       if (renderAfter && state.facetimeArchiveOpen && getFacetimeArchiveOwner()?.id === userId) {
-        render();
+        mountFacetimeArchiveWindow();
       } else {
         updateSyncIndicator();
       }
@@ -1420,6 +1420,33 @@ function getFacetimeArchiveMediaPreserveKey() {
 function renderMediaWindowSlot(id, preservedMediaIds, html) {
   if (preservedMediaIds.has(id)) return `<div data-media-window-placeholder="${escapeAttribute(id)}"></div>`;
   return html;
+}
+
+function mountDesktopWindow(selector, html, bindWindowEvents = () => {}) {
+  const surface = document.querySelector(".desktop-surface");
+  if (!surface) {
+    render();
+    return;
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = html.trim();
+  const nextWindow = template.content.firstElementChild;
+  if (!nextWindow) return;
+
+  const currentWindow = surface.querySelector(selector);
+  if (currentWindow) {
+    currentWindow.replaceWith(nextWindow);
+  } else {
+    surface.append(nextWindow);
+  }
+
+  bindAppWindowDragging();
+  bindWindowEvents();
+}
+
+function removeDesktopWindow(selector) {
+  document.querySelector(selector)?.remove();
 }
 
 function getDesktopPictureIconId(pictureId) {
@@ -2225,7 +2252,7 @@ function bindFacetimeEvents() {
     state.facetimeArchiveOpen = true;
     state.facetimeArchiveOwnerId = owner.id;
     state.facetimeArchiveStatus = "";
-    render();
+    mountFacetimeArchiveWindow();
     loadFacetimeArchive(owner.id, { renderAfter: true });
   });
 
@@ -2244,11 +2271,15 @@ function bindFacetimeEvents() {
 function bindFacetimeArchiveEvents() {
   if (!state.facetimeArchiveOpen) return;
 
+  bindFacetimeArchiveWindowEvents();
+}
+
+function bindFacetimeArchiveWindowEvents() {
   document.querySelector("[data-close-facetime-archive]")?.addEventListener("click", () => {
     state.facetimeArchiveOpen = false;
     state.facetimeArchiveVideoId = "";
     state.facetimeArchiveStatus = "";
-    render();
+    removeDesktopWindow('[data-draggable-window="facetime-archive"]');
   });
 
   document.querySelectorAll("[data-facetime-archive-owner]").forEach((button) => {
@@ -2256,7 +2287,7 @@ function bindFacetimeArchiveEvents() {
       state.facetimeArchiveOwnerId = button.dataset.facetimeArchiveOwner || USERS[0].id;
       state.facetimeArchiveVideoId = "";
       state.facetimeArchiveStatus = "";
-      render();
+      mountFacetimeArchiveWindow();
       loadFacetimeArchive(state.facetimeArchiveOwnerId, { renderAfter: true });
     });
   });
@@ -2269,12 +2300,17 @@ function bindFacetimeArchiveEvents() {
 
       state.facetimeArchiveVideoId = videoId;
       state.facetimeArchiveStatus = "";
-      render();
+      mountFacetimeArchiveWindow();
       loadFacetimeArchiveVideo(owner.id, videoId, { renderAfter: true });
     });
   });
 
   attachFacetimeArchiveVideo();
+}
+
+function mountFacetimeArchiveWindow() {
+  if (!state.facetimeArchiveOpen) return;
+  mountDesktopWindow('[data-draggable-window="facetime-archive"]', renderFacetimeArchiveWindow(), bindFacetimeArchiveWindowEvents);
 }
 
 function attachFacetimeVideo() {
@@ -2794,14 +2830,23 @@ function bindMonkeyVideoEvents() {
     }
 
     state.monkeyWindowOpen = true;
-    render();
+    mountMonkeyWindow();
     playMonkeyVideo({ restart: true });
   });
 
+  bindMonkeyWindowEvents();
+}
+
+function bindMonkeyWindowEvents() {
   document.querySelector("[data-close-monkey-video]")?.addEventListener("click", () => {
     state.monkeyWindowOpen = false;
-    render();
+    removeDesktopWindow('[data-draggable-window="monkey-see-genevieve-do"]');
   });
+}
+
+function mountMonkeyWindow() {
+  if (!state.monkeyWindowOpen) return;
+  mountDesktopWindow('[data-draggable-window="monkey-see-genevieve-do"]', renderMonkeyWindow(), bindMonkeyWindowEvents);
 }
 
 function playMonkeyVideo({ restart = false } = {}) {
@@ -2821,14 +2866,23 @@ function bindSeedWindowEvents() {
       }
 
       state.seedWindow = icon.dataset.openSeedWindow;
-      render();
+      mountSeedWindow();
     });
   });
 
+  bindSeedWindowControls();
+}
+
+function bindSeedWindowControls() {
   document.querySelector("[data-close-seed-window]")?.addEventListener("click", () => {
     state.seedWindow = "";
-    render();
+    removeDesktopWindow(".seed-window");
   });
+}
+
+function mountSeedWindow() {
+  if (!state.seedWindow) return;
+  mountDesktopWindow(".seed-window", renderSeedWindow(state.seedWindow), bindSeedWindowControls);
 }
 
 function bindUkuleleEvents() {
@@ -2842,13 +2896,22 @@ function bindUkuleleEvents() {
 
     state.ukuleleVideoIndex = Math.floor(Math.random() * UKULELE_VIDEOS.length);
     state.ukuleleWindowOpen = true;
-    render();
+    mountUkuleleWindow();
   });
 
+  bindUkuleleWindowEvents();
+}
+
+function bindUkuleleWindowEvents() {
   document.querySelector("[data-close-ukulele]")?.addEventListener("click", () => {
     state.ukuleleWindowOpen = false;
-    render();
+    removeDesktopWindow('[data-draggable-window="ulaylee"]');
   });
+}
+
+function mountUkuleleWindow() {
+  if (!state.ukuleleWindowOpen) return;
+  mountDesktopWindow('[data-draggable-window="ulaylee"]', renderUkuleleWindow(), bindUkuleleWindowEvents);
 }
 
 function bindKimchiQuestEvents() {
@@ -2862,23 +2925,32 @@ function bindKimchiQuestEvents() {
 
     state.kimchiQuestOpen = true;
     state.kimchiQuestBites = 0;
-    render();
+    mountKimchiQuestWindow();
   });
 
+  bindKimchiQuestWindowEvents();
+}
+
+function bindKimchiQuestWindowEvents() {
   document.querySelector("[data-close-kimchi-quest]")?.addEventListener("click", () => {
     state.kimchiQuestOpen = false;
-    render();
+    removeDesktopWindow('[data-draggable-window="kimchi-quest"]');
   });
 
   document.querySelector("[data-kimchi-jar]")?.addEventListener("click", () => {
     state.kimchiQuestBites = Math.min(KIMCHI_QUEST_MAX_BITES, state.kimchiQuestBites + 1);
-    render();
+    mountKimchiQuestWindow();
   });
 
   document.querySelector("[data-reset-kimchi-quest]")?.addEventListener("click", () => {
     state.kimchiQuestBites = 0;
-    render();
+    mountKimchiQuestWindow();
   });
+}
+
+function mountKimchiQuestWindow() {
+  if (!state.kimchiQuestOpen) return;
+  mountDesktopWindow('[data-draggable-window="kimchi-quest"]', renderKimchiQuestWindow(), bindKimchiQuestWindowEvents);
 }
 
 function bindDesktopBackgroundEvents() {
@@ -2938,15 +3010,27 @@ function bindDesktopPictureEvents() {
       }
 
       state.pictureWindowId = icon.dataset.openPicture || "";
-      render();
+      mountDesktopPictureWindow();
     });
   });
 
+  bindDesktopPictureWindowEvents();
+  bindDesktopPictureDropEvents(desktop);
+}
+
+function bindDesktopPictureWindowEvents() {
   document.querySelector("[data-close-picture-window]")?.addEventListener("click", () => {
     state.pictureWindowId = "";
-    render();
+    removeDesktopWindow(".picture-window");
   });
+}
 
+function mountDesktopPictureWindow() {
+  if (!state.pictureWindowId) return;
+  mountDesktopWindow(".picture-window", renderDesktopPictureWindow(state.pictureWindowId), bindDesktopPictureWindowEvents);
+}
+
+function bindDesktopPictureDropEvents(desktop) {
   ["dragenter", "dragover"].forEach((eventName) => {
     desktop.addEventListener(eventName, (event) => {
       if (isSpecialDesktopDropTarget(event.target) || !hasDesktopPictureDrag(event.dataTransfer)) return;
@@ -2995,6 +3079,9 @@ function getFirstImageFile(files) {
 
 function bindAppWindowDragging() {
   document.querySelectorAll("[data-draggable-window]").forEach((windowElement) => {
+    if (windowElement.dataset.windowDragBound === "true") return;
+    windowElement.dataset.windowDragBound = "true";
+
     let pointerId = null;
     let startX = 0;
     let startY = 0;
