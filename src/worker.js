@@ -3,7 +3,7 @@ const FACETIME_VIDEO_KEY_PREFIX = "facetime-video:v1:";
 const FACETIME_VIDEO_META_KEY_PREFIX = "facetime-video-meta:v1:";
 const FACETIME_ARCHIVE_KEY_PREFIX = "facetime-video-archive:v1:";
 const FACETIME_ARCHIVE_INDEX_KEY_PREFIX = "facetime-video-archive-index:v1:";
-const FACETIME_ARCHIVE_DELETE_PASSWORD_HASH = "b493d48364afe44d11c0165cf470a4164d1e2609911ef998be868d46ade3de4e";
+const SHARED_DELETE_PASSWORD_HASH = "b493d48364afe44d11c0165cf470a4164d1e2609911ef998be868d46ade3de4e";
 const DESKTOP_PICTURE_KEY_PREFIX = "desktop-picture:v1:";
 
 const DEFAULT_ITEMS = [
@@ -81,26 +81,7 @@ async function handleStateRequest(request, env) {
   }
 
   if (request.method === "DELETE") {
-    const requestedArchiveVideoUserId = url.searchParams.get("facetimeArchiveVideo");
-    if (!requestedArchiveVideoUserId) return json({ error: "Archive video required." }, 400);
-    if (!USER_IDS.includes(requestedArchiveVideoUserId)) return json({ error: "Unknown FaceTime archive user." }, 404);
-
-    const videoId = normalizeShortText(url.searchParams.get("videoId"), "", 96);
-    if (!videoId) return json({ error: "Archive video id required." }, 400);
-
-    let payload = {};
-    try {
-      payload = await request.json();
-    } catch {
-      payload = {};
-    }
-
-    if (!(await isFacetimeArchiveDeletePassword(payload?.password))) {
-      return json({ error: "Wrong archive password." }, 403);
-    }
-
-    const archive = await deleteStoredFacetimeArchiveVideo(store, requestedArchiveVideoUserId, videoId);
-    return json({ archive });
+    return handleDeleteStateRequest(request, store);
   }
 
   if (request.method === "POST") {
@@ -122,6 +103,46 @@ async function handleStateRequest(request, env) {
   }
 
   return json({ error: "Method not allowed." }, 405);
+}
+
+async function handleDeleteStateRequest(request, store) {
+  const url = new URL(request.url);
+  let payload = {};
+
+  try {
+    payload = await request.json();
+  } catch {
+    payload = {};
+  }
+
+  if (!(await isSharedDeletePassword(payload?.password))) {
+    return json({ error: "Wrong delete password." }, 403);
+  }
+
+  const requestedArchiveVideoUserId = url.searchParams.get("facetimeArchiveVideo");
+  if (requestedArchiveVideoUserId) {
+    if (!USER_IDS.includes(requestedArchiveVideoUserId)) return json({ error: "Unknown FaceTime archive user." }, 404);
+
+    const videoId = normalizeShortText(url.searchParams.get("videoId"), "", 96);
+    if (!videoId) return json({ error: "Archive video id required." }, 400);
+
+    const archive = await deleteStoredFacetimeArchiveVideo(store, requestedArchiveVideoUserId, videoId);
+    return json({ archive });
+  }
+
+  const desktopPictureId = normalizeShortText(url.searchParams.get("desktopPicture"), "", 96);
+  if (desktopPictureId) {
+    const data = await deleteStoredDesktopPicture(store, desktopPictureId);
+    return json({ data: getStateDataForResponse(data, { includeMedia: false }) });
+  }
+
+  const desktopLinkId = normalizeShortText(url.searchParams.get("desktopLink"), "", 96);
+  if (desktopLinkId) {
+    const data = await deleteStoredDesktopLink(store, desktopLinkId);
+    return json({ data: getStateDataForResponse(data, { includeMedia: false }) });
+  }
+
+  return json({ error: "Delete target required." }, 400);
 }
 
 function normalizeData(data) {
@@ -337,8 +358,50 @@ async function putDesktopPictures(store, pictures) {
   );
 }
 
+async function deleteStoredDesktopPicture(store, pictureId) {
+  const normalizedId = normalizeShortText(pictureId, "", 96);
+  const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia: true });
+  if (!normalizedId) return storedData;
+
+  const data = {
+    ...storedData,
+    desktopPictures: normalizeDesktopPictures(storedData.desktopPictures).filter((picture) => picture.id !== normalizedId),
+    iconPositions: removeIconPosition(storedData.iconPositions, getDesktopPictureIconId(normalizedId)),
+  };
+
+  await Promise.all([
+    store.delete(getDesktopPictureKey(normalizedId)),
+    store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data))),
+  ]);
+
+  return data;
+}
+
+async function deleteStoredDesktopLink(store, linkId) {
+  const normalizedId = normalizeShortText(linkId, "", 96);
+  const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia: true });
+  if (!normalizedId) return storedData;
+
+  const data = {
+    ...storedData,
+    desktopLinks: normalizeDesktopLinks(storedData.desktopLinks).filter((link) => link.id !== normalizedId),
+    iconPositions: removeIconPosition(storedData.iconPositions, getDesktopLinkIconId(normalizedId)),
+  };
+
+  await store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data)));
+  return data;
+}
+
 function getDesktopPictureKey(id) {
   return `${DESKTOP_PICTURE_KEY_PREFIX}${encodeURIComponent(id)}`;
+}
+
+function getDesktopPictureIconId(pictureId) {
+  return `desktop-picture-${pictureId}`;
+}
+
+function getDesktopLinkIconId(linkId) {
+  return `desktop-link-${linkId}`;
 }
 
 function mergeDesktopPictures(storedPictures, incomingPictures) {
@@ -707,6 +770,12 @@ function mergeIconPositions(storedPositions, incomingPositions) {
   };
 }
 
+function removeIconPosition(positions, iconId) {
+  const nextPositions = normalizeIconPositions(positions);
+  delete nextPositions[iconId];
+  return nextPositions;
+}
+
 function clampIconCoordinate(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
@@ -722,12 +791,12 @@ function normalizeWallpaperMode(value) {
   return value === "fill" ? "fill" : DEFAULT_WALLPAPER_MODE;
 }
 
-async function isFacetimeArchiveDeletePassword(value) {
+async function isSharedDeletePassword(value) {
   const candidate = normalizeShortText(value, "", 96);
   if (!candidate) return false;
 
   const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate));
-  return timingSafeHexEquals(bytesToHex(new Uint8Array(hashBuffer)), FACETIME_ARCHIVE_DELETE_PASSWORD_HASH);
+  return timingSafeHexEquals(bytesToHex(new Uint8Array(hashBuffer)), SHARED_DELETE_PASSWORD_HASH);
 }
 
 function bytesToHex(bytes) {

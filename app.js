@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-28 12:54:57 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-28 01:29:33 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -556,6 +556,14 @@ function getFacetimeArchiveVideoApiUrl(userId, videoId) {
 
 function getFacetimeArchiveDeleteApiUrl(userId, videoId) {
   return getFacetimeArchiveVideoApiUrl(userId, videoId);
+}
+
+function getDesktopPictureDeleteApiUrl(pictureId) {
+  return `${API_STATE_URL}?desktopPicture=${encodeURIComponent(pictureId || "")}`;
+}
+
+function getDesktopLinkDeleteApiUrl(linkId) {
+  return `${API_STATE_URL}?desktopLink=${encodeURIComponent(linkId || "")}`;
 }
 
 function getDataForRemoteSave(data, options = {}) {
@@ -3322,6 +3330,162 @@ function openDesktopLink(linkId) {
   if (opened) opened.opener = null;
 }
 
+function getDesktopTrashDeleteTarget(icon) {
+  const pictureId = icon?.dataset?.openPicture || "";
+  if (pictureId) {
+    return {
+      type: "picture",
+      id: pictureId,
+      iconId: getDesktopPictureIconId(pictureId),
+      url: getDesktopPictureDeleteApiUrl(pictureId),
+      label: "photo",
+    };
+  }
+
+  const linkId = icon?.dataset?.openDesktopLink || "";
+  if (linkId) {
+    return {
+      type: "link",
+      id: linkId,
+      iconId: getDesktopLinkIconId(linkId),
+      url: getDesktopLinkDeleteApiUrl(linkId),
+      label: "link",
+    };
+  }
+
+  return null;
+}
+
+function canTrashDesktopIcon(icon) {
+  return Boolean(getDesktopTrashDeleteTarget(icon));
+}
+
+function getDesktopTrashIcon() {
+  return Array.from(document.querySelectorAll("[data-desktop-icon]")).find((element) => element.dataset.desktopIcon === "trash") || null;
+}
+
+function isIconOverTrash(icon) {
+  const trash = getDesktopTrashIcon();
+  if (!icon || !trash || icon === trash || !canTrashDesktopIcon(icon)) return false;
+
+  const iconRect = icon.getBoundingClientRect();
+  const trashRect = trash.getBoundingClientRect();
+  const iconCenterX = iconRect.left + iconRect.width / 2;
+  const iconCenterY = iconRect.top + iconRect.height / 2;
+  const padding = 18;
+
+  return (
+    iconCenterX >= trashRect.left - padding &&
+    iconCenterX <= trashRect.right + padding &&
+    iconCenterY >= trashRect.top - padding &&
+    iconCenterY <= trashRect.bottom + padding
+  );
+}
+
+function updateTrashDropFeedback(icon) {
+  const trash = getDesktopTrashIcon();
+  if (!trash) return;
+
+  trash.classList.toggle("is-trash-armed", isIconOverTrash(icon));
+}
+
+function clearTrashDropFeedback() {
+  getDesktopTrashIcon()?.classList.remove("is-trash-armed");
+}
+
+async function deleteDesktopItemFromTrash(icon) {
+  const target = getDesktopTrashDeleteTarget(icon);
+  if (!target) return;
+
+  const password = window.prompt("Trash password");
+  if (password === null) {
+    saveData({ immediate: true });
+    return;
+  }
+
+  state.remoteStatus = "saving";
+  updateSyncIndicator();
+
+  try {
+    const response = await fetch(target.url, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ password }),
+      cache: "no-store",
+    });
+    let payload = {};
+
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+
+    if (response.status === 403) {
+      window.alert(payload.error || "Wrong delete password.");
+      saveData({ immediate: true });
+      return;
+    }
+
+    if (!response.ok) throw new Error(payload.error || `Trash delete failed: ${response.status}`);
+
+    applyDesktopTrashDelete(target, payload.data);
+    state.remoteReady = true;
+    state.remoteStatus = "synced";
+    state.remoteError = "";
+    saveLocalData();
+    updateSyncIndicator();
+  } catch (error) {
+    state.remoteReady = false;
+    state.remoteStatus = "local";
+    state.remoteError = error.message || "Trash delete failed.";
+    window.alert("Could not delete this from the shared cloud.");
+    updateSyncIndicator();
+  }
+}
+
+function applyDesktopTrashDelete(target, remoteData) {
+  const data = normalizeData(remoteData);
+
+  if (target.type === "picture") {
+    state.data.desktopPictures = Array.isArray(remoteData?.desktopPictures)
+      ? normalizeDesktopPictures(data.desktopPictures)
+      : normalizeDesktopPictures(state.data.desktopPictures).filter((picture) => picture.id !== target.id);
+
+    if (state.pictureWindowId === target.id) {
+      state.pictureWindowId = "";
+      removeDesktopWindow(".picture-window");
+    }
+  }
+
+  if (target.type === "link") {
+    state.data.desktopLinks = Array.isArray(remoteData?.desktopLinks)
+      ? normalizeDesktopLinks(data.desktopLinks)
+      : normalizeDesktopLinks(state.data.desktopLinks).filter((link) => link.id !== target.id);
+  }
+
+  state.data.iconPositions = remoteData?.iconPositions
+    ? normalizeIconPositions(remoteData.iconPositions)
+    : removeIconPosition(state.data.iconPositions, target.iconId);
+
+  removeDesktopIconElement(target.iconId);
+}
+
+function removeIconPosition(positions, iconId) {
+  const nextPositions = normalizeIconPositions(positions);
+  delete nextPositions[iconId];
+  return nextPositions;
+}
+
+function removeDesktopIconElement(iconId) {
+  Array.from(document.querySelectorAll("[data-desktop-icon]"))
+    .find((element) => element.dataset.desktopIcon === iconId)
+    ?.remove();
+}
+
 function bindUkuleleEvents() {
   const icon = document.querySelector("[data-open-ukulele]");
 
@@ -3621,6 +3785,7 @@ function bindDesktopIconDragging() {
 
       moved = true;
       setIconOffset(icon, baseX + deltaX, baseY + deltaY);
+      updateTrashDropFeedback(icon);
     });
 
     icon.addEventListener("pointerup", (event) => {
@@ -3630,14 +3795,16 @@ function bindDesktopIconDragging() {
     });
 
     icon.addEventListener("pointercancel", () => {
-      finishIconDrag(icon, moved);
+      clearTrashDropFeedback();
+      finishIconDrag(icon, moved, { allowTrashDelete: false });
       pointerId = null;
     });
   });
 }
 
-function finishIconDrag(icon, moved) {
+function finishIconDrag(icon, moved, { allowTrashDelete = true } = {}) {
   icon.classList.remove("is-dragging");
+  clearTrashDropFeedback();
 
   if (!moved) return;
 
@@ -3646,6 +3813,16 @@ function finishIconDrag(icon, moved) {
   const y = clampIconCoordinate(icon.style.getPropertyValue("--icon-y").replace("px", ""));
   state.data.iconPositions ||= {};
   state.data.iconPositions[id] = { x, y };
+
+  if (allowTrashDelete && isIconOverTrash(icon)) {
+    icon.dataset.dragMoved = "true";
+    window.setTimeout(() => {
+      icon.dataset.dragMoved = "";
+    }, 500);
+    deleteDesktopItemFromTrash(icon);
+    return;
+  }
+
   saveData({ immediate: true });
 
   icon.dataset.dragMoved = "true";

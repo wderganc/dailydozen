@@ -325,6 +325,17 @@ h2 {
   z-index: 6;
 }
 
+.desktop-icon.is-trash-armed span {
+  outline: 2px dotted #000000;
+  outline-offset: 5px;
+  filter: brightness(1.12) contrast(1.06);
+}
+
+.desktop-icon.is-trash-armed strong {
+  color: #ffffff;
+  background: #000000;
+}
+
 .desktop-drop-target.is-drag-over span,
 .desktop-drop-target:focus-visible span {
   outline: 2px dotted #ffffff;
