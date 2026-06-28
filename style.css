@@ -747,6 +747,57 @@ h2 {
   content: "";
 }
 
+.icon-link-maker,
+.icon-link-app {
+  background:
+    linear-gradient(#ffffff 0 70%, #d8d8d8 70%),
+    #ffffff !important;
+}
+
+.icon-link-maker::before,
+.icon-link-app::before {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  bottom: 6px;
+  left: 9px;
+  border: 2px solid #000000;
+  background:
+    linear-gradient(135deg, transparent 0 72%, #bdbdbd 72%),
+    #ffffff;
+  content: "";
+}
+
+.icon-link-maker::after {
+  position: absolute;
+  top: 17px;
+  left: 14px;
+  width: 19px;
+  height: 9px;
+  border: 2px solid #000000;
+  border-right-color: transparent;
+  border-left-color: transparent;
+  background: #71a7d8;
+  box-shadow: 6px 0 0 #71a7d8, 6px 0 0 2px #000000;
+  content: "";
+  transform: rotate(-18deg);
+}
+
+.icon-link-app::after {
+  position: absolute;
+  top: 16px;
+  left: 14px;
+  width: 20px;
+  height: 14px;
+  border: 2px solid #000000;
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 0 42%, #000000 42% 48%, transparent 48%),
+    linear-gradient(0deg, transparent 0 42%, #000000 42% 48%, transparent 48%),
+    #8ac7df;
+  content: "";
+}
+
 .icon-trash {
   width: 33px !important;
   height: 34px !important;
@@ -1701,7 +1752,8 @@ button:focus {
 
 .facetime-mode-button,
 .facetime-archive-link,
-.facetime-record-button {
+.facetime-record-button,
+.facetime-archive-delete {
   min-height: 24px;
   padding: 3px 9px;
   border: 2px solid #000000;
@@ -1824,13 +1876,25 @@ button:focus {
 
 .facetime-archive-item {
   display: grid;
-  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
   width: 100%;
   min-height: 38px;
-  padding: 5px;
+  padding: 4px;
   border: 1px solid #000000;
   color: #000000;
   background: #eeeeee;
+}
+
+.facetime-archive-play {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 1px;
+  border: 0;
+  color: inherit;
+  background: transparent;
   text-align: left;
   font: inherit;
 }
@@ -1841,6 +1905,20 @@ button:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.facetime-archive-delete {
+  min-height: 22px;
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+.facetime-archive-item.is-active .facetime-archive-delete {
+  background: #ffffff;
+}
+
+.facetime-archive-item.is-active span {
+  color: #ffffff;
 }
 
 .facetime-archive-item span,
@@ -2037,6 +2115,55 @@ button:focus {
   inset: 16px 40% 16px auto;
   width: 2px;
   background: rgba(255, 255, 255, 0.58);
+}
+
+.link-maker-window {
+  position: absolute;
+  top: 142px;
+  left: clamp(16px, 22vw, 260px);
+  z-index: 16;
+  width: min(380px, calc(100% - 24px));
+  padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
+}
+
+.link-maker-window::after {
+  display: none;
+}
+
+.link-maker-header {
+  margin-bottom: 8px;
+}
+
+.link-maker-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.link-maker-form {
+  display: grid;
+  gap: 8px;
+}
+
+.link-maker-form label {
+  display: grid;
+  gap: 3px;
+}
+
+.link-maker-form label span,
+.link-maker-status {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.link-maker-form input {
+  min-height: 27px;
+}
+
+.link-maker-status {
+  margin: 0;
+  color: #000000;
 }
 
 .seed-catalog {

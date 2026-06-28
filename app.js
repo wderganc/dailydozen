@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-28 10:58:15 AM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-28 12:54:57 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -132,6 +132,12 @@ const state = {
     genevieve: false,
   },
   coloredPencilsWindowOpen: false,
+  linkMakerWindowOpen: false,
+  linkForm: {
+    title: "",
+    url: "",
+    status: "",
+  },
   pictureWindowId: "",
   facetimeWindowOpen: false,
   facetimeArchiveOpen: false,
@@ -241,6 +247,7 @@ function getDefaultData() {
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
     iconPositions: {},
     desktopPictures: [],
+    desktopLinks: [],
     facetimeVideos: {},
   };
 }
@@ -262,6 +269,7 @@ function loadData() {
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
       iconPositions: normalizeIconPositions(parsed.iconPositions || loadIconPositions()),
       desktopPictures: normalizeDesktopPictures(parsed.desktopPictures),
+      desktopLinks: normalizeDesktopLinks(parsed.desktopLinks),
       facetimeVideos: normalizeFacetimeVideos(parsed.facetimeVideos, parsed.facetimeVideo),
     };
   } catch {
@@ -280,6 +288,7 @@ function normalizeData(data) {
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
     desktopPictures: normalizeDesktopPictures(data?.desktopPictures),
+    desktopLinks: normalizeDesktopLinks(data?.desktopLinks),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
   };
 }
@@ -310,6 +319,48 @@ function normalizeDesktopPicture(value) {
     uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
     uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
   };
+}
+
+function normalizeDesktopLinks(value) {
+  if (!Array.isArray(value)) return [];
+
+  const linksById = new Map();
+  value.map(normalizeDesktopLink).forEach((link) => {
+    if (link.id && link.url) linksById.set(link.id, link);
+  });
+
+  return [...linksById.values()];
+}
+
+function normalizeDesktopLink(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const url = normalizeDesktopLinkUrl(value.url);
+  if (!url) return {};
+
+  const id = normalizeShortText(value.id, "", 96) || `${url.length}-${url.slice(-36)}`;
+
+  return {
+    id,
+    title: normalizeShortText(value.title || value.name, "Link", 48),
+    url,
+    addedBy: normalizeShortText(value.addedBy, "Daily Dozen", 80),
+    addedAt: normalizeShortText(value.addedAt, "", 48),
+  };
+}
+
+function normalizeDesktopLinkUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const url = new URL(withScheme);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeFacetimeVideos(value, legacyVideo) {
@@ -503,6 +554,10 @@ function getFacetimeArchiveVideoApiUrl(userId, videoId) {
   return `${API_STATE_URL}?facetimeArchiveVideo=${encodeURIComponent(userId || "")}&videoId=${encodeURIComponent(videoId || "")}`;
 }
 
+function getFacetimeArchiveDeleteApiUrl(userId, videoId) {
+  return getFacetimeArchiveVideoApiUrl(userId, videoId);
+}
+
 function getDataForRemoteSave(data, options = {}) {
   const normalized = normalizeData(data);
 
@@ -582,6 +637,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
   const previousFacetimeVideoId = getVisibleFacetimeVideoId();
   const previousPartnerFacetimeVideoId = getFacetimeUnreadStatus().videoId;
   const previousDesktopPicturesSignature = getDesktopPicturesSignature();
+  const previousDesktopLinksSignature = getDesktopLinksSignature();
 
   try {
     const response = await fetch(getRemoteStateUrl({ includeMedia }), {
@@ -608,6 +664,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
     const facetimeVideoChanged = previousFacetimeVideoId !== getVisibleFacetimeVideoId();
     const partnerFacetimeVideoChanged = previousPartnerFacetimeVideoId !== getFacetimeUnreadStatus().videoId;
     const desktopPicturesChanged = previousDesktopPicturesSignature !== getDesktopPicturesSignature();
+    const desktopLinksChanged = previousDesktopLinksSignature !== getDesktopLinksSignature();
     if (facetimeVideoChanged) state.facetimePlaybackStatus = "";
     if (partnerFacetimeVideoChanged && state.facetimeWindowOpen && state.facetimeMode === "shared") {
       markFacetimePartnerVideoRead();
@@ -617,6 +674,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
       renderAfter &&
       !isTextEditing() &&
       (desktopPicturesChanged ||
+        desktopLinksChanged ||
         (!state.monkeyWindowOpen &&
           !state.ukuleleWindowOpen &&
           (!state.facetimeWindowOpen || facetimeVideoChanged || partnerFacetimeVideoChanged)))
@@ -667,6 +725,7 @@ function mergeData(remoteData, localData) {
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(remote.iconPositions, local.iconPositions),
     desktopPictures: mergeDesktopPictures(remote.desktopPictures, local.desktopPictures),
+    desktopLinks: mergeDesktopLinks(remote.desktopLinks, local.desktopLinks),
     facetimeVideos: mergeFacetimeVideos(remote.facetimeVideos, local.facetimeVideos),
   };
 }
@@ -744,6 +803,10 @@ function hasDesktopPictures(pictures) {
   return normalizeDesktopPictures(pictures).length > 0;
 }
 
+function hasDesktopLinks(links) {
+  return normalizeDesktopLinks(links).length > 0;
+}
+
 function mergeDesktopPictures(remotePictures, localPictures) {
   const picturesById = new Map();
 
@@ -756,6 +819,26 @@ function mergeDesktopPictures(remotePictures, localPictures) {
   });
 
   return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function mergeDesktopLinks(remoteLinks, localLinks) {
+  const linksById = new Map();
+
+  normalizeDesktopLinks(remoteLinks).forEach((link) => {
+    linksById.set(link.id, link);
+  });
+
+  normalizeDesktopLinks(localLinks).forEach((link) => {
+    linksById.set(link.id, link);
+  });
+
+  return [...linksById.values()];
+}
+
+function getDesktopLinksSignature() {
+  return normalizeDesktopLinks(state.data.desktopLinks)
+    .map((link) => `${link.id}:${link.url}:${link.title}`)
+    .join("|");
 }
 
 function getDesktopPicturesSignature() {
@@ -846,6 +929,7 @@ function hasLocalActivity(data) {
     Object.keys(data.sharedNoteMeta || {}).length > 0 ||
     hasIconPositions(data.iconPositions) ||
     hasDesktopPictures(data.desktopPictures) ||
+    hasDesktopLinks(data.desktopLinks) ||
     hasFacetimeVideos(data.facetimeVideos) ||
     Boolean(data.wallpaper) ||
     data.wallpaperMode === "fill"
@@ -1123,6 +1207,62 @@ async function loadFacetimeArchiveVideo(userId, videoId, { renderAfter = false }
     });
 
   return facetimeArchiveVideoLoads[loadKey];
+}
+
+async function deleteFacetimeArchiveVideo(userId, videoId) {
+  if (!userId || !videoId) return;
+
+  const password = window.prompt("Archive password");
+  if (password === null) return;
+
+  setFacetimeArchiveStatus("Deleting archived video...");
+
+  try {
+    const response = await fetch(getFacetimeArchiveDeleteApiUrl(userId, videoId), {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ password }),
+      cache: "no-store",
+    });
+    let payload = {};
+
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+
+    if (response.status === 403) {
+      setFacetimeArchiveStatus(payload.error || "Wrong archive password.");
+      return;
+    }
+
+    if (!response.ok) throw new Error(payload.error || `Archive delete failed: ${response.status}`);
+
+    state.facetimeArchive ||= {};
+    state.facetimeArchive[userId] = normalizeFacetimeArchiveList(payload.archive, userId);
+    state.remoteReady = true;
+    state.remoteStatus = "synced";
+    state.remoteError = "";
+
+    if (state.facetimeArchiveOwnerId === userId && state.facetimeArchiveVideoId === videoId) {
+      state.facetimeArchiveVideoId = "";
+      clearFacetimeVideoObjectUrl("archive");
+    }
+
+    state.facetimeArchiveStatus = "Archived video deleted.";
+    mountFacetimeArchiveWindow();
+    updateSyncIndicator();
+  } catch (error) {
+    state.remoteReady = false;
+    state.remoteStatus = "local";
+    state.remoteError = error.message || "Archive delete failed.";
+    setFacetimeArchiveStatus("Could not delete archived video.");
+    updateSyncIndicator();
+  }
 }
 
 function renderFacetimeBadge() {
@@ -1471,8 +1611,16 @@ function getDesktopPictureWindowId(pictureId) {
   return `picture-window-${pictureId}`;
 }
 
+function getDesktopLinkIconId(linkId) {
+  return `desktop-link-${linkId}`;
+}
+
 function getDesktopPicture(pictureId) {
   return normalizeDesktopPictures(state.data.desktopPictures).find((picture) => picture.id === pictureId) || null;
+}
+
+function getDesktopLink(linkId) {
+  return normalizeDesktopLinks(state.data.desktopLinks).find((link) => link.id === linkId) || null;
 }
 
 function renderDesktopPictureIcons() {
@@ -1486,6 +1634,48 @@ function renderDesktopPictureIcons() {
       `,
     )
     .join("");
+}
+
+function renderDesktopLinkIcons() {
+  return normalizeDesktopLinks(state.data.desktopLinks).map(renderDesktopLinkIcon).join("");
+}
+
+function renderDesktopLinkIcon(link) {
+  return `
+    <button class="desktop-icon desktop-link-icon" type="button" data-desktop-icon="${escapeAttribute(getDesktopLinkIconId(link.id))}" data-open-desktop-link="${escapeAttribute(link.id)}" aria-label="Open ${escapeAttribute(link.title)}" title="${escapeAttribute(link.url)}" style="${getDesktopIconStyle(getDesktopLinkIconId(link.id))}">
+      <span class="icon-link-app"></span>
+      <strong>${escapeHtml(link.title)}</strong>
+    </button>
+  `;
+}
+
+function mountDesktopLinkIcon(link) {
+  const icons = document.querySelector(".desktop-icons");
+  if (!icons) {
+    render();
+    return;
+  }
+
+  const iconId = getDesktopLinkIconId(link.id);
+  const existing = Array.from(icons.querySelectorAll("[data-desktop-icon]")).find((element) => element.dataset.desktopIcon === iconId);
+  const template = document.createElement("template");
+  template.innerHTML = renderDesktopLinkIcon(link).trim();
+  const icon = template.content.firstElementChild;
+  if (!icon) return;
+
+  if (existing) {
+    existing.replaceWith(icon);
+  } else {
+    const trash = icons.querySelector('[data-desktop-icon="trash"]');
+    if (trash) {
+      trash.before(icon);
+    } else {
+      icons.append(icon);
+    }
+  }
+
+  bindDesktopLinkEvents();
+  bindDesktopIconDragging();
 }
 
 function renderMacShell(content, preservedMediaIds = new Set()) {
@@ -1554,10 +1744,15 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
             <span class="icon-pencils"></span>
             <strong>Colored Pencils</strong>
           </button>
+          <button class="desktop-icon" type="button" data-desktop-icon="link-maker" data-open-link-maker aria-label="Open Link Maker" style="${getDesktopIconStyle("link-maker")}">
+            <span class="icon-link-maker"></span>
+            <strong>Link Maker</strong>
+          </button>
           <button class="desktop-icon" type="button" data-desktop-icon="genevieves-seed-collection" data-open-seed-window="genevieve" aria-label="Open Genevieve's Seed Collection" style="${getDesktopIconStyle("genevieves-seed-collection")}">
             <span class="icon-folder icon-folder-green"></span>
             <strong>Genevieve's Seed Collection</strong>
           </button>
+          ${renderDesktopLinkIcons()}
           ${renderDesktopPictureIcons()}
           <div class="desktop-icon" data-desktop-icon="trash" style="${getDesktopIconStyle("trash")}">
             <span class="icon-trash"></span>
@@ -1572,6 +1767,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
         ${state.seedWindows.claudia ? renderSeedWindow("claudia") : ""}
         ${state.seedWindows.genevieve ? renderSeedWindow("genevieve") : ""}
         ${state.coloredPencilsWindowOpen ? renderColoredPencilsWindow() : ""}
+        ${state.linkMakerWindowOpen ? renderLinkMakerWindow() : ""}
         ${state.pictureWindowId ? renderDesktopPictureWindow(state.pictureWindowId) : ""}
         ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
         ${state.facetimeArchiveOpen ? renderMediaWindowSlot("facetime-archive", preservedMediaIds, renderFacetimeArchiveWindow()) : ""}
@@ -2000,10 +2196,13 @@ function renderFacetimeArchiveWindow() {
                   .map((video) => {
                     const videoId = getFacetimeVideoId(video);
                     return `
-                      <button class="facetime-archive-item ${videoId === selectedVideoId ? "is-active" : ""}" type="button" data-play-facetime-archive-video="${escapeAttribute(videoId)}" aria-pressed="${videoId === selectedVideoId}">
-                        <strong>${escapeHtml(video.name || "Archived video")}</strong>
-                        <span>${video.uploadedAt ? escapeHtml(formatMessageTime(video.uploadedAt)) : "Saved video"}${video.size ? ` · ${formatFileSize(video.size)}` : ""}</span>
-                      </button>
+                      <article class="facetime-archive-item ${videoId === selectedVideoId ? "is-active" : ""}">
+                        <button class="facetime-archive-play" type="button" data-play-facetime-archive-video="${escapeAttribute(videoId)}" aria-pressed="${videoId === selectedVideoId}">
+                          <strong>${escapeHtml(video.name || "Archived video")}</strong>
+                          <span>${video.uploadedAt ? escapeHtml(formatMessageTime(video.uploadedAt)) : "Saved video"}${video.size ? ` - ${formatFileSize(video.size)}` : ""}</span>
+                        </button>
+                        <button class="facetime-archive-delete" type="button" data-delete-facetime-archive-video="${escapeAttribute(videoId)}" aria-label="Delete ${escapeAttribute(video.name || "archived video")}">Delete</button>
+                      </article>
                     `;
                   })
                   .join("")
@@ -2104,6 +2303,30 @@ function renderColoredPencilsWindow() {
   `;
 }
 
+function renderLinkMakerWindow() {
+  return `
+    <section class="link-maker-window mac-window" data-window-title="Link Maker" data-draggable-window="link-maker" style="${getWindowStyle("link-maker")}" role="dialog" aria-labelledby="link-maker-title">
+      <button class="window-close" type="button" data-close-link-maker aria-label="Close Link Maker" title="Close">×</button>
+      <div class="link-maker-header">
+        <p class="eyebrow">new web app</p>
+        <h2 id="link-maker-title">Link Maker</h2>
+      </div>
+      <form class="link-maker-form" data-link-maker-form>
+        <label>
+          <span>Name</span>
+          <input name="title" maxlength="48" autocomplete="off" value="${escapeAttribute(state.linkForm.title)}" />
+        </label>
+        <label>
+          <span>URL</span>
+          <input name="url" inputmode="url" autocomplete="url" value="${escapeAttribute(state.linkForm.url)}" />
+        </label>
+        ${state.linkForm.status ? `<p class="link-maker-status">${escapeHtml(state.linkForm.status)}</p>` : ""}
+        <button class="primary-button" type="submit">${iconMarkup("check")} Create icon</button>
+      </form>
+    </section>
+  `;
+}
+
 function bindEvents() {
   document.querySelectorAll("[data-login-user]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2168,6 +2391,8 @@ function bindEvents() {
   bindUkuleleEvents();
   bindSeedWindowEvents();
   bindColoredPencilsEvents();
+  bindLinkMakerEvents();
+  bindDesktopLinkEvents();
   bindMonkeyVideoEvents();
   bindFacetimeEvents();
   bindFacetimeArchiveEvents();
@@ -2350,6 +2575,16 @@ function bindFacetimeArchiveWindowEvents() {
     });
   });
 
+  document.querySelectorAll("[data-delete-facetime-archive-video]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const owner = getFacetimeArchiveOwner();
+      const videoId = button.dataset.deleteFacetimeArchiveVideo || "";
+      if (!owner || !videoId) return;
+
+      deleteFacetimeArchiveVideo(owner.id, videoId);
+    });
+  });
+
   attachFacetimeArchiveVideo();
 }
 
@@ -2524,6 +2759,15 @@ function getFacetimeVideoObjectUrl(video, namespace = "current") {
 
   facetimeVideoUrlCache[namespace] = { key: videoKey, url };
   return url;
+}
+
+function clearFacetimeVideoObjectUrl(namespace) {
+  const cached = facetimeVideoUrlCache[namespace];
+  if (cached?.url?.startsWith("blob:")) {
+    URL.revokeObjectURL(cached.url);
+  }
+
+  delete facetimeVideoUrlCache[namespace];
 }
 
 function dataUrlToBlob(dataUrl, fallbackType = "video/mp4") {
@@ -2971,6 +3215,113 @@ function mountColoredPencilsWindow() {
   mountDesktopWindow('[data-draggable-window="colored-pencils"]', renderColoredPencilsWindow(), bindColoredPencilsWindowEvents);
 }
 
+function bindLinkMakerEvents() {
+  const icon = document.querySelector("[data-open-link-maker]");
+
+  icon?.addEventListener("click", () => {
+    if (icon.dataset.dragMoved === "true") {
+      icon.dataset.dragMoved = "";
+      return;
+    }
+
+    state.linkMakerWindowOpen = true;
+    mountLinkMakerWindow();
+  });
+
+  bindLinkMakerWindowEvents();
+}
+
+function bindLinkMakerWindowEvents() {
+  document.querySelector("[data-close-link-maker]")?.addEventListener("click", () => {
+    state.linkMakerWindowOpen = false;
+    state.linkForm.status = "";
+    removeDesktopWindow('[data-draggable-window="link-maker"]');
+  });
+
+  document.querySelector("[data-link-maker-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    createDesktopLinkFromForm({
+      title: String(form.get("title") || ""),
+      url: String(form.get("url") || ""),
+    });
+  });
+}
+
+function mountLinkMakerWindow() {
+  if (!state.linkMakerWindowOpen) return;
+  mountDesktopWindow('[data-draggable-window="link-maker"]', renderLinkMakerWindow(), bindLinkMakerWindowEvents);
+}
+
+function createDesktopLinkFromForm({ title, url }) {
+  const normalizedUrl = normalizeDesktopLinkUrl(url);
+  state.linkForm.title = title;
+  state.linkForm.url = url;
+
+  if (!normalizedUrl) {
+    state.linkForm.status = "That link is not a web URL.";
+    mountLinkMakerWindow();
+    return;
+  }
+
+  const user = getUser();
+  const link = normalizeDesktopLink({
+    id: createMessageId(user?.id || "link"),
+    title: title || getDesktopLinkTitleFromUrl(normalizedUrl),
+    url: normalizedUrl,
+    addedBy: user?.name || "Daily Dozen",
+    addedAt: new Date().toISOString(),
+  });
+
+  if (!link.id || !link.url) {
+    state.linkForm.status = "That link could not be created.";
+    mountLinkMakerWindow();
+    return;
+  }
+
+  state.data.desktopLinks = mergeDesktopLinks(state.data.desktopLinks, [link]);
+  state.linkForm = {
+    title: "",
+    url: "",
+    status: "Icon created.",
+  };
+  saveData({ immediate: true });
+  mountDesktopLinkIcon(link);
+  mountLinkMakerWindow();
+}
+
+function getDesktopLinkTitleFromUrl(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || "Link";
+  } catch {
+    return "Link";
+  }
+}
+
+function bindDesktopLinkEvents() {
+  document.querySelectorAll("[data-open-desktop-link]").forEach((icon) => {
+    if (icon.dataset.desktopLinkBound === "true") return;
+    icon.dataset.desktopLinkBound = "true";
+
+    icon.addEventListener("click", () => {
+      if (icon.dataset.dragMoved === "true") {
+        icon.dataset.dragMoved = "";
+        return;
+      }
+
+      openDesktopLink(icon.dataset.openDesktopLink || "");
+    });
+  });
+}
+
+function openDesktopLink(linkId) {
+  const link = getDesktopLink(linkId);
+  if (!link?.url) return;
+
+  const opened = window.open(link.url, "_blank", "noopener,noreferrer");
+  if (opened) opened.opener = null;
+}
+
 function bindUkuleleEvents() {
   const icon = document.querySelector("[data-open-ukulele]");
 
@@ -3235,6 +3586,9 @@ function setWindowOffset(windowElement, x, y) {
 
 function bindDesktopIconDragging() {
   document.querySelectorAll("[data-desktop-icon]").forEach((icon) => {
+    if (icon.dataset.iconDragBound === "true") return;
+    icon.dataset.iconDragBound = "true";
+
     let pointerId = null;
     let startX = 0;
     let startY = 0;

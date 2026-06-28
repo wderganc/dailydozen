@@ -3,6 +3,7 @@ const FACETIME_VIDEO_KEY_PREFIX = "facetime-video:v1:";
 const FACETIME_VIDEO_META_KEY_PREFIX = "facetime-video-meta:v1:";
 const FACETIME_ARCHIVE_KEY_PREFIX = "facetime-video-archive:v1:";
 const FACETIME_ARCHIVE_INDEX_KEY_PREFIX = "facetime-video-archive-index:v1:";
+const FACETIME_ARCHIVE_DELETE_PASSWORD_HASH = "b493d48364afe44d11c0165cf470a4164d1e2609911ef998be868d46ade3de4e";
 const DESKTOP_PICTURE_KEY_PREFIX = "desktop-picture:v1:";
 
 const DEFAULT_ITEMS = [
@@ -79,6 +80,29 @@ async function handleStateRequest(request, env) {
     return json({ data });
   }
 
+  if (request.method === "DELETE") {
+    const requestedArchiveVideoUserId = url.searchParams.get("facetimeArchiveVideo");
+    if (!requestedArchiveVideoUserId) return json({ error: "Archive video required." }, 400);
+    if (!USER_IDS.includes(requestedArchiveVideoUserId)) return json({ error: "Unknown FaceTime archive user." }, 404);
+
+    const videoId = normalizeShortText(url.searchParams.get("videoId"), "", 96);
+    if (!videoId) return json({ error: "Archive video id required." }, 400);
+
+    let payload = {};
+    try {
+      payload = await request.json();
+    } catch {
+      payload = {};
+    }
+
+    if (!(await isFacetimeArchiveDeletePassword(payload?.password))) {
+      return json({ error: "Wrong archive password." }, 403);
+    }
+
+    const archive = await deleteStoredFacetimeArchiveVideo(store, requestedArchiveVideoUserId, videoId);
+    return json({ archive });
+  }
+
   if (request.method === "POST") {
     try {
       const payload = await request.json();
@@ -111,6 +135,7 @@ function normalizeData(data) {
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
     desktopPictures: normalizeDesktopPictures(data?.desktopPictures),
+    desktopLinks: normalizeDesktopLinks(data?.desktopLinks),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
   };
 }
@@ -146,6 +171,7 @@ function mergeStoredData(
     wallpaperMode: incomingData.wallpaperMode || storedData.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(storedData.iconPositions, incomingData.iconPositions),
     desktopPictures,
+    desktopLinks: mergeDesktopLinks(storedData.desktopLinks, incomingData.desktopLinks),
     facetimeVideos,
   };
 }
@@ -329,6 +355,62 @@ function mergeDesktopPictures(storedPictures, incomingPictures) {
   return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
 }
 
+function normalizeDesktopLinks(value) {
+  if (!Array.isArray(value)) return [];
+
+  const linksById = new Map();
+  value.map(normalizeDesktopLink).forEach((link) => {
+    if (link.id && link.url) linksById.set(link.id, link);
+  });
+
+  return [...linksById.values()];
+}
+
+function normalizeDesktopLink(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const url = normalizeDesktopLinkUrl(value.url);
+  if (!url) return {};
+
+  const id = normalizeShortText(value.id, "", 96) || `${url.length}-${url.slice(-36)}`;
+
+  return {
+    id,
+    title: normalizeShortText(value.title || value.name, "Link", 48),
+    url,
+    addedBy: normalizeShortText(value.addedBy, "Daily Dozen", 80),
+    addedAt: normalizeShortText(value.addedAt, "", 48),
+  };
+}
+
+function normalizeDesktopLinkUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const url = new URL(withScheme);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function mergeDesktopLinks(storedLinks, incomingLinks) {
+  const linksById = new Map();
+
+  normalizeDesktopLinks(storedLinks).forEach((link) => {
+    linksById.set(link.id, link);
+  });
+
+  normalizeDesktopLinks(incomingLinks).forEach((link) => {
+    linksById.set(link.id, link);
+  });
+
+  return [...linksById.values()];
+}
+
 function normalizeFacetimeVideos(value, legacyVideo) {
   const videos = {};
 
@@ -450,6 +532,19 @@ async function putArchivedFacetimeVideo(store, userId, video) {
 
   await store.put(archiveKey, JSON.stringify(archivedVideo));
   await store.put(indexKey, JSON.stringify(archive));
+}
+
+async function deleteStoredFacetimeArchiveVideo(store, userId, videoId) {
+  const normalizedId = normalizeShortText(videoId, "", 96);
+  if (!normalizedId) return getStoredFacetimeArchive(store, userId);
+
+  const archive = (await getStoredFacetimeArchive(store, userId)).filter((entry) => getFacetimeVideoId(entry) !== normalizedId);
+  await Promise.all([
+    store.delete(getFacetimeArchiveVideoKey(userId, normalizedId)),
+    store.put(getFacetimeArchiveIndexKey(userId), JSON.stringify(archive)),
+  ]);
+
+  return archive;
 }
 
 function normalizeFacetimeArchiveList(value) {
@@ -625,6 +720,29 @@ function normalizeWallpaper(value) {
 
 function normalizeWallpaperMode(value) {
   return value === "fill" ? "fill" : DEFAULT_WALLPAPER_MODE;
+}
+
+async function isFacetimeArchiveDeletePassword(value) {
+  const candidate = normalizeShortText(value, "", 96);
+  if (!candidate) return false;
+
+  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidate));
+  return timingSafeHexEquals(bytesToHex(new Uint8Array(hashBuffer)), FACETIME_ARCHIVE_DELETE_PASSWORD_HASH);
+}
+
+function bytesToHex(bytes) {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function timingSafeHexEquals(left, right) {
+  const maxLength = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
+
+  for (let index = 0; index < maxLength; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+
+  return difference === 0;
 }
 
 function json(body, status = 200) {
