@@ -809,6 +809,36 @@ h2 {
   content: "";
 }
 
+.icon-video-file {
+  background:
+    linear-gradient(135deg, transparent 0 72%, #bdbdbd 72%),
+    linear-gradient(#ffffff 0 70%, #d8d8d8 70%),
+    #ffffff !important;
+}
+
+.icon-video-file::before {
+  position: absolute;
+  top: 10px;
+  right: 7px;
+  bottom: 10px;
+  left: 8px;
+  border: 2px solid #000000;
+  background:
+    linear-gradient(90deg, #000000 0 4px, transparent 4px calc(100% - 4px), #000000 calc(100% - 4px)),
+    repeating-linear-gradient(0deg, #ffffff 0 5px, #cfd7df 5px 9px);
+  content: "";
+}
+
+.icon-video-file::after {
+  position: absolute;
+  top: 18px;
+  left: 19px;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 11px solid #000000;
+  content: "";
+}
+
 .icon-trash {
   width: 33px !important;
   height: 34px !important;
@@ -909,7 +939,7 @@ h2 {
 .mac-window[data-draggable-window].is-window-dragging {
   cursor: grabbing;
   user-select: none;
-  z-index: 40;
+  z-index: 999 !important;
 }
 
 .mac-window[data-draggable-window].is-window-dragging::before {
@@ -1989,6 +2019,59 @@ button:focus {
 }
 
 .picture-frame strong {
+  color: #000000;
+  font-size: 11px;
+}
+
+.desktop-video-window {
+  position: absolute;
+  top: max(52px, 10vh);
+  left: clamp(14px, 23vw, 280px);
+  z-index: 19;
+  width: min(640px, calc(100% - 28px));
+  padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
+}
+
+.desktop-video-window::after {
+  display: none;
+}
+
+.desktop-video-frame {
+  display: grid;
+  gap: 7px;
+}
+
+.desktop-video-player,
+.desktop-video-loading {
+  display: grid;
+  width: 100%;
+  min-height: min(360px, calc(100vh - 180px));
+  place-items: center;
+  border: 2px solid #000000;
+  color: #000000;
+  background: #ffffff;
+  box-shadow:
+    inset 2px 2px 0 #ffffff,
+    3px 3px 0 rgba(0, 0, 0, 0.24);
+}
+
+.desktop-video-player {
+  max-height: calc(100vh - 160px);
+  object-fit: contain;
+}
+
+.desktop-video-caption {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.desktop-video-caption strong {
   color: #000000;
   font-size: 11px;
 }

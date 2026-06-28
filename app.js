@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-28 01:29:33 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-28 05:51:18 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -60,6 +60,8 @@ const WALLPAPER_JPEG_QUALITY = 0.78;
 const DESKTOP_PICTURE_MAX_SIDE = 900;
 const DESKTOP_PICTURE_JPEG_QUALITY = 0.76;
 const DESKTOP_PICTURE_LIMIT = 12;
+const DESKTOP_VIDEO_LIMIT = 12;
+const WINDOW_LAYER_BASE = 40;
 const DEFAULT_WALLPAPER_MODE = "tile";
 const KIMCHI_QUEST_MAX_BITES = 5;
 const MONKEY_VIDEO_URL = "assets/proboscis-monkey.mp4";
@@ -102,6 +104,7 @@ const facetimeVideoUrlCache = {};
 const facetimeVideoLoads = {};
 const facetimeArchiveLoads = {};
 const facetimeArchiveVideoLoads = {};
+const desktopVideoLoads = {};
 let facetimeRecorder = null;
 let facetimeRecordingStream = null;
 let facetimeRecordingChunks = [];
@@ -138,7 +141,8 @@ const state = {
     url: "",
     status: "",
   },
-  pictureWindowId: "",
+  pictureWindowIds: [],
+  desktopVideoWindowIds: [],
   facetimeWindowOpen: false,
   facetimeArchiveOpen: false,
   facetimeArchiveOwnerId: "",
@@ -151,6 +155,8 @@ const state = {
   facetimeRecordingActive: false,
   facetimeRecordingStatus: "",
   windowPositions: {},
+  windowLayers: {},
+  windowLayerCounter: WINDOW_LAYER_BASE,
 };
 
 function loadIconPositions() {
@@ -247,6 +253,7 @@ function getDefaultData() {
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
     iconPositions: {},
     desktopPictures: [],
+    desktopVideos: [],
     desktopLinks: [],
     facetimeVideos: {},
   };
@@ -269,6 +276,7 @@ function loadData() {
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
       iconPositions: normalizeIconPositions(parsed.iconPositions || loadIconPositions()),
       desktopPictures: normalizeDesktopPictures(parsed.desktopPictures),
+      desktopVideos: normalizeDesktopVideos(parsed.desktopVideos),
       desktopLinks: normalizeDesktopLinks(parsed.desktopLinks),
       facetimeVideos: normalizeFacetimeVideos(parsed.facetimeVideos, parsed.facetimeVideo),
     };
@@ -288,6 +296,7 @@ function normalizeData(data) {
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
     desktopPictures: normalizeDesktopPictures(data?.desktopPictures),
+    desktopVideos: normalizeDesktopVideos(data?.desktopVideos),
     desktopLinks: normalizeDesktopLinks(data?.desktopLinks),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
   };
@@ -319,6 +328,68 @@ function normalizeDesktopPicture(value) {
     uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
     uploadedAt: normalizeShortText(value.uploadedAt, "", 48),
   };
+}
+
+function normalizeDesktopVideos(value) {
+  if (!Array.isArray(value)) return [];
+
+  const videosById = new Map();
+  value.map(normalizeDesktopVideo).forEach((video) => {
+    if (!hasDesktopVideoRecord(video)) return;
+    videosById.set(getDesktopVideoId(video), video);
+  });
+
+  return [...videosById.values()].slice(-DESKTOP_VIDEO_LIMIT);
+}
+
+function normalizeDesktopVideo(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const type = normalizeVideoMimeType(value.type, value.name);
+  const data = normalizeVideoDataUrl(value.data, type);
+  const uploadedAt = normalizeShortText(value.uploadedAt, "", 48);
+  const id =
+    normalizeShortText(value.id || value.videoId, "", 96) ||
+    uploadedAt ||
+    (data.startsWith("data:video/") ? `${data.length}-${data.slice(-36)}` : "");
+  if (!id && !data.startsWith("data:video/")) return {};
+
+  return {
+    id,
+    videoId: id,
+    data,
+    name: normalizeShortText(value.name, "Desktop video", 96),
+    type,
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt,
+  };
+}
+
+function hasDesktopVideo(video) {
+  return Boolean(video?.data);
+}
+
+function hasDesktopVideoRecord(video) {
+  return Boolean(video?.data || getDesktopVideoId(video));
+}
+
+function getDesktopVideoId(video) {
+  if (!video || typeof video !== "object") return "";
+  return video.id || video.videoId || video.uploadedAt || (video.data ? `${video.data.length}-${String(video.data).slice(-36)}` : "");
+}
+
+function getDesktopVideoMetadata(video) {
+  const normalized = normalizeDesktopVideo(video);
+  if (!hasDesktopVideoRecord(normalized)) return {};
+  const { data, ...metadata } = normalized;
+  return metadata;
+}
+
+function getDesktopVideoMetadataList(videos) {
+  return normalizeDesktopVideos(videos)
+    .map(getDesktopVideoMetadata)
+    .filter(hasDesktopVideoRecord);
 }
 
 function normalizeDesktopLinks(value) {
@@ -494,16 +565,36 @@ function saveLocalData() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
   } catch {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.data, wallpaper: "", desktopPictures: [], facetimeVideo: {}, facetimeVideos: {} }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          ...state.data,
+          wallpaper: "",
+          desktopPictures: [],
+          desktopVideos: getDesktopVideoMetadataList(state.data.desktopVideos),
+          facetimeVideo: {},
+          facetimeVideos: {},
+        }),
+      );
     } catch {}
   }
 }
 
-function saveData({ immediate = false, includeWallpaper = false, includeDesktopPictures = false, includeFacetimeVideos = false, facetimeUserId = "" } = {}) {
+function saveData({
+  immediate = false,
+  includeWallpaper = false,
+  includeDesktopPictures = false,
+  includeDesktopVideos = false,
+  desktopVideoId = "",
+  includeFacetimeVideos = false,
+  facetimeUserId = "",
+} = {}) {
   saveLocalData();
   const options = {
     includeWallpaper,
     includeDesktopPictures,
+    includeDesktopVideos,
+    desktopVideoId,
     includeFacetimeVideos,
     facetimeUserId,
   };
@@ -533,6 +624,8 @@ function mergeRemoteSaveOptions(current = {}, incoming = {}) {
   return {
     includeWallpaper: Boolean(current.includeWallpaper || incoming.includeWallpaper),
     includeDesktopPictures: Boolean(current.includeDesktopPictures || incoming.includeDesktopPictures),
+    includeDesktopVideos: Boolean(current.includeDesktopVideos || incoming.includeDesktopVideos),
+    desktopVideoId: incoming.desktopVideoId || current.desktopVideoId || "",
     includeFacetimeVideos: Boolean(current.includeFacetimeVideos || incoming.includeFacetimeVideos),
     facetimeUserId: incoming.facetimeUserId || current.facetimeUserId || "",
   };
@@ -562,6 +655,14 @@ function getDesktopPictureDeleteApiUrl(pictureId) {
   return `${API_STATE_URL}?desktopPicture=${encodeURIComponent(pictureId || "")}`;
 }
 
+function getDesktopVideoApiUrl(videoId) {
+  return `${API_STATE_URL}?desktopVideo=${encodeURIComponent(videoId || "")}`;
+}
+
+function getDesktopVideoDeleteApiUrl(videoId) {
+  return getDesktopVideoApiUrl(videoId);
+}
+
 function getDesktopLinkDeleteApiUrl(linkId) {
   return `${API_STATE_URL}?desktopLink=${encodeURIComponent(linkId || "")}`;
 }
@@ -573,8 +674,19 @@ function getDataForRemoteSave(data, options = {}) {
     ...normalized,
     wallpaper: options.includeWallpaper ? normalized.wallpaper : "",
     desktopPictures: options.includeDesktopPictures ? normalized.desktopPictures : [],
+    desktopVideos: getDesktopVideosForRemoteSave(normalized.desktopVideos, options),
     facetimeVideos: getFacetimeVideosForRemoteSave(normalized.facetimeVideos, options),
   };
+}
+
+function getDesktopVideosForRemoteSave(videos, options = {}) {
+  const normalized = normalizeDesktopVideos(videos);
+  if (!options.includeDesktopVideos) return [];
+
+  return normalized.map((video) => {
+    const videoId = getDesktopVideoId(video);
+    return !options.desktopVideoId || videoId === options.desktopVideoId ? video : getDesktopVideoMetadata(video);
+  });
 }
 
 function getFacetimeVideosForRemoteSave(videos, options = {}) {
@@ -645,6 +757,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
   const previousFacetimeVideoId = getVisibleFacetimeVideoId();
   const previousPartnerFacetimeVideoId = getFacetimeUnreadStatus().videoId;
   const previousDesktopPicturesSignature = getDesktopPicturesSignature();
+  const previousDesktopVideosSignature = getDesktopVideosSignature();
   const previousDesktopLinksSignature = getDesktopLinksSignature();
 
   try {
@@ -672,6 +785,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
     const facetimeVideoChanged = previousFacetimeVideoId !== getVisibleFacetimeVideoId();
     const partnerFacetimeVideoChanged = previousPartnerFacetimeVideoId !== getFacetimeUnreadStatus().videoId;
     const desktopPicturesChanged = previousDesktopPicturesSignature !== getDesktopPicturesSignature();
+    const desktopVideosChanged = previousDesktopVideosSignature !== getDesktopVideosSignature();
     const desktopLinksChanged = previousDesktopLinksSignature !== getDesktopLinksSignature();
     if (facetimeVideoChanged) state.facetimePlaybackStatus = "";
     if (partnerFacetimeVideoChanged && state.facetimeWindowOpen && state.facetimeMode === "shared") {
@@ -682,6 +796,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
       renderAfter &&
       !isTextEditing() &&
       (desktopPicturesChanged ||
+        desktopVideosChanged ||
         desktopLinksChanged ||
         (!state.monkeyWindowOpen &&
           !state.ukuleleWindowOpen &&
@@ -733,6 +848,7 @@ function mergeData(remoteData, localData) {
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(remote.iconPositions, local.iconPositions),
     desktopPictures: mergeDesktopPictures(remote.desktopPictures, local.desktopPictures),
+    desktopVideos: mergeDesktopVideos(remote.desktopVideos, local.desktopVideos),
     desktopLinks: mergeDesktopLinks(remote.desktopLinks, local.desktopLinks),
     facetimeVideos: mergeFacetimeVideos(remote.facetimeVideos, local.facetimeVideos),
   };
@@ -811,6 +927,10 @@ function hasDesktopPictures(pictures) {
   return normalizeDesktopPictures(pictures).length > 0;
 }
 
+function hasDesktopVideos(videos) {
+  return normalizeDesktopVideos(videos).length > 0;
+}
+
 function hasDesktopLinks(links) {
   return normalizeDesktopLinks(links).length > 0;
 }
@@ -827,6 +947,35 @@ function mergeDesktopPictures(remotePictures, localPictures) {
   });
 
   return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function mergeDesktopVideos(remoteVideos, localVideos) {
+  const videosById = new Map();
+
+  normalizeDesktopVideos(remoteVideos).forEach((video) => {
+    videosById.set(getDesktopVideoId(video), video);
+  });
+
+  normalizeDesktopVideos(localVideos).forEach((video) => {
+    const videoId = getDesktopVideoId(video);
+    videosById.set(videoId, mergeDesktopVideoRecord(videosById.get(videoId), video));
+  });
+
+  return [...videosById.values()].slice(-DESKTOP_VIDEO_LIMIT);
+}
+
+function mergeDesktopVideoRecord(current, incoming) {
+  const currentVideo = normalizeDesktopVideo(current);
+  const incomingVideo = normalizeDesktopVideo(incoming);
+
+  if (!hasDesktopVideoRecord(currentVideo)) return incomingVideo;
+  if (!hasDesktopVideoRecord(incomingVideo)) return currentVideo;
+
+  return {
+    ...currentVideo,
+    ...incomingVideo,
+    data: incomingVideo.data || currentVideo.data || "",
+  };
 }
 
 function mergeDesktopLinks(remoteLinks, localLinks) {
@@ -846,6 +995,12 @@ function mergeDesktopLinks(remoteLinks, localLinks) {
 function getDesktopLinksSignature() {
   return normalizeDesktopLinks(state.data.desktopLinks)
     .map((link) => `${link.id}:${link.url}:${link.title}`)
+    .join("|");
+}
+
+function getDesktopVideosSignature() {
+  return normalizeDesktopVideos(state.data.desktopVideos)
+    .map((video) => `${getDesktopVideoId(video)}:${video.name}:${video.uploadedAt}:${video.size}`)
     .join("|");
 }
 
@@ -937,6 +1092,7 @@ function hasLocalActivity(data) {
     Object.keys(data.sharedNoteMeta || {}).length > 0 ||
     hasIconPositions(data.iconPositions) ||
     hasDesktopPictures(data.desktopPictures) ||
+    hasDesktopVideos(data.desktopVideos) ||
     hasDesktopLinks(data.desktopLinks) ||
     hasFacetimeVideos(data.facetimeVideos) ||
     Boolean(data.wallpaper) ||
@@ -1217,6 +1373,53 @@ async function loadFacetimeArchiveVideo(userId, videoId, { renderAfter = false }
   return facetimeArchiveVideoLoads[loadKey];
 }
 
+async function loadDesktopVideo(videoId, { renderAfter = false } = {}) {
+  if (!videoId) return null;
+
+  const currentVideo = getDesktopVideo(videoId);
+  if (hasDesktopVideo(currentVideo)) return currentVideo;
+  if (desktopVideoLoads[videoId]) return desktopVideoLoads[videoId];
+
+  desktopVideoLoads[videoId] = fetch(getDesktopVideoApiUrl(videoId), {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Desktop video load failed: ${response.status}`);
+      const payload = await response.json();
+      const loadedVideo = normalizeDesktopVideo(payload.video);
+      if (!hasDesktopVideoRecord(loadedVideo)) return null;
+
+      state.data.desktopVideos = mergeDesktopVideos(state.data.desktopVideos, [loadedVideo]);
+      state.remoteReady = true;
+      state.remoteStatus = "synced";
+      state.remoteError = "";
+      saveLocalData();
+
+      if (renderAfter && state.desktopVideoWindowIds?.includes(videoId)) {
+        mountDesktopVideoWindow(videoId);
+      } else {
+        updateSyncIndicator();
+      }
+
+      return getDesktopVideo(videoId);
+    })
+    .catch((error) => {
+      state.remoteReady = false;
+      state.remoteStatus = "local";
+      state.remoteError = error.message || "Desktop video load failed.";
+      updateSyncIndicator();
+      return null;
+    })
+    .finally(() => {
+      delete desktopVideoLoads[videoId];
+    });
+
+  return desktopVideoLoads[videoId];
+}
+
 async function deleteFacetimeArchiveVideo(userId, videoId) {
   if (!userId || !videoId) return;
 
@@ -1465,7 +1668,13 @@ function render() {
 }
 
 function collectPreservedMediaWindows() {
-  return ["facetime", "facetime-archive", "monkey-see-genevieve-do", "ulaylee"]
+  return [
+    "facetime",
+    "facetime-archive",
+    "monkey-see-genevieve-do",
+    "ulaylee",
+    ...getOpenDesktopVideoWindowIds().map(getDesktopVideoWindowId),
+  ]
     .map((id) => {
       const node = document.querySelector(`[data-draggable-window="${id}"]`);
 
@@ -1563,7 +1772,17 @@ function getMediaWindowPreserveKey(id) {
     return state.ukuleleWindowOpen ? `ulaylee:${state.ukuleleVideoIndex}` : "";
   }
 
+  if (id.startsWith("desktop-video-window-")) {
+    const videoId = id.replace("desktop-video-window-", "");
+    return getDesktopVideoMediaPreserveKey(videoId);
+  }
+
   return "";
+}
+
+function getDesktopVideoMediaPreserveKey(videoId) {
+  const video = getDesktopVideo(videoId);
+  return state.desktopVideoWindowIds?.includes(videoId) && hasDesktopVideo(video) ? `desktop-video:${videoId}:${video.data?.length || 0}` : "";
 }
 
 function getFacetimeMediaPreserveKey() {
@@ -1603,12 +1822,36 @@ function mountDesktopWindow(selector, html, bindWindowEvents = () => {}) {
     surface.append(nextWindow);
   }
 
+  bringWindowToFront(nextWindow.dataset.draggableWindow, nextWindow);
   bindAppWindowDragging();
   bindWindowEvents();
 }
 
 function removeDesktopWindow(selector) {
-  document.querySelector(selector)?.remove();
+  const windowElement = document.querySelector(selector);
+  if (!windowElement) return;
+
+  const id = windowElement.dataset.draggableWindow;
+  if (id) delete state.windowLayers[id];
+  windowElement.remove();
+}
+
+function bringWindowToFront(id, windowElement = null) {
+  if (!id) return;
+
+  const currentLayers = Object.values(state.windowLayers || {})
+    .map(Number)
+    .filter(Number.isFinite);
+  const currentTop = Math.max(WINDOW_LAYER_BASE, state.windowLayerCounter || WINDOW_LAYER_BASE, ...currentLayers);
+  const nextLayer = currentTop + 1;
+  state.windowLayerCounter = nextLayer;
+  state.windowLayers ||= {};
+  state.windowLayers[id] = nextLayer;
+
+  const target =
+    windowElement ||
+    Array.from(document.querySelectorAll("[data-draggable-window]")).find((element) => element.dataset.draggableWindow === id);
+  if (target) target.style.zIndex = String(nextLayer);
 }
 
 function getDesktopPictureIconId(pictureId) {
@@ -1619,12 +1862,55 @@ function getDesktopPictureWindowId(pictureId) {
   return `picture-window-${pictureId}`;
 }
 
+function getDesktopPictureWindowSelector(pictureId) {
+  return `[data-draggable-window="${getDesktopPictureWindowId(pictureId)}"]`;
+}
+
+function getDesktopVideoIconId(videoId) {
+  return `desktop-video-${videoId}`;
+}
+
+function getDesktopVideoWindowId(videoId) {
+  return `desktop-video-window-${videoId}`;
+}
+
+function getDesktopVideoWindowSelector(videoId) {
+  return `[data-draggable-window="${getDesktopVideoWindowId(videoId)}"]`;
+}
+
 function getDesktopLinkIconId(linkId) {
   return `desktop-link-${linkId}`;
 }
 
 function getDesktopPicture(pictureId) {
   return normalizeDesktopPictures(state.data.desktopPictures).find((picture) => picture.id === pictureId) || null;
+}
+
+function getDesktopVideo(videoId) {
+  return normalizeDesktopVideos(state.data.desktopVideos).find((video) => getDesktopVideoId(video) === videoId) || null;
+}
+
+function getOpenDesktopPictureWindowIds() {
+  const seen = new Set();
+  const picturesById = new Set(normalizeDesktopPictures(state.data.desktopPictures).map((picture) => picture.id));
+
+  return (Array.isArray(state.pictureWindowIds) ? state.pictureWindowIds : [])
+    .filter((pictureId) => {
+      if (!pictureId || seen.has(pictureId) || !picturesById.has(pictureId)) return false;
+      seen.add(pictureId);
+      return true;
+    });
+}
+
+function getOpenDesktopVideoWindowIds() {
+  const seen = new Set();
+  const videosById = new Set(normalizeDesktopVideos(state.data.desktopVideos).map(getDesktopVideoId));
+
+  return (Array.isArray(state.desktopVideoWindowIds) ? state.desktopVideoWindowIds : []).filter((videoId) => {
+    if (!videoId || seen.has(videoId) || !videosById.has(videoId)) return false;
+    seen.add(videoId);
+    return true;
+  });
 }
 
 function getDesktopLink(linkId) {
@@ -1644,6 +1930,20 @@ function renderDesktopPictureIcons() {
     .join("");
 }
 
+function renderDesktopVideoIcons() {
+  return normalizeDesktopVideos(state.data.desktopVideos).map(renderDesktopVideoIcon).join("");
+}
+
+function renderDesktopVideoIcon(video) {
+  const videoId = getDesktopVideoId(video);
+  return `
+    <button class="desktop-icon desktop-video-icon" type="button" data-desktop-icon="${escapeAttribute(getDesktopVideoIconId(videoId))}" data-open-desktop-video="${escapeAttribute(videoId)}" aria-label="Open ${escapeAttribute(video.name)}" style="${getDesktopIconStyle(getDesktopVideoIconId(videoId))}">
+      <span class="icon-video-file"></span>
+      <strong>${escapeHtml(video.name)}</strong>
+    </button>
+  `;
+}
+
 function renderDesktopLinkIcons() {
   return normalizeDesktopLinks(state.data.desktopLinks).map(renderDesktopLinkIcon).join("");
 }
@@ -1655,6 +1955,23 @@ function renderDesktopLinkIcon(link) {
       <strong>${escapeHtml(link.title)}</strong>
     </button>
   `;
+}
+
+function renderDesktopPictureWindows() {
+  const openPictureIds = getOpenDesktopPictureWindowIds();
+  state.pictureWindowIds = openPictureIds;
+  return openPictureIds.map(renderDesktopPictureWindow).join("");
+}
+
+function renderDesktopVideoWindows(preservedMediaIds = new Set()) {
+  const openVideoIds = getOpenDesktopVideoWindowIds();
+  state.desktopVideoWindowIds = openVideoIds;
+  return openVideoIds
+    .map((videoId) => {
+      const windowId = getDesktopVideoWindowId(videoId);
+      return renderMediaWindowSlot(windowId, preservedMediaIds, renderDesktopVideoWindow(videoId));
+    })
+    .join("");
 }
 
 function mountDesktopLinkIcon(link) {
@@ -1761,6 +2078,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
             <strong>Genevieve's Seed Collection</strong>
           </button>
           ${renderDesktopLinkIcons()}
+          ${renderDesktopVideoIcons()}
           ${renderDesktopPictureIcons()}
           <div class="desktop-icon" data-desktop-icon="trash" style="${getDesktopIconStyle("trash")}">
             <span class="icon-trash"></span>
@@ -1776,7 +2094,8 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
         ${state.seedWindows.genevieve ? renderSeedWindow("genevieve") : ""}
         ${state.coloredPencilsWindowOpen ? renderColoredPencilsWindow() : ""}
         ${state.linkMakerWindowOpen ? renderLinkMakerWindow() : ""}
-        ${state.pictureWindowId ? renderDesktopPictureWindow(state.pictureWindowId) : ""}
+        ${renderDesktopPictureWindows()}
+        ${renderDesktopVideoWindows(preservedMediaIds)}
         ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
         ${state.facetimeArchiveOpen ? renderMediaWindowSlot("facetime-archive", preservedMediaIds, renderFacetimeArchiveWindow()) : ""}
       </div>
@@ -1806,8 +2125,19 @@ function getDesktopIconStyle(id) {
 
 function getWindowStyle(id) {
   const position = state.windowPositions[id];
-  if (!position) return "";
-  return `--window-x: ${position.x}px; --window-y: ${position.y}px;`;
+  const layer = Number(state.windowLayers?.[id]);
+  const rules = [];
+
+  if (position) {
+    rules.push(`--window-x: ${position.x}px`);
+    rules.push(`--window-y: ${position.y}px`);
+  }
+
+  if (Number.isFinite(layer)) {
+    rules.push(`z-index: ${layer}`);
+  }
+
+  return rules.length ? `${rules.join("; ")};` : "";
 }
 
 function getWallpaperMode() {
@@ -2090,17 +2420,44 @@ function renderDesktopPictureWindow(pictureId) {
   if (!picture) return "";
 
   const windowId = getDesktopPictureWindowId(picture.id);
+  const titleId = `${windowId}-title`;
 
   return `
-    <section class="picture-window mac-window" data-window-title="${escapeAttribute(picture.name)}" data-draggable-window="${escapeAttribute(windowId)}" style="${getWindowStyle(windowId)}" role="dialog" aria-labelledby="picture-window-title">
-      <button class="window-close" type="button" data-close-picture-window aria-label="Close ${escapeAttribute(picture.name)}" title="Close">×</button>
+    <section class="picture-window mac-window" data-window-title="${escapeAttribute(picture.name)}" data-draggable-window="${escapeAttribute(windowId)}" style="${getWindowStyle(windowId)}" role="dialog" aria-labelledby="${escapeAttribute(titleId)}">
+      <button class="window-close" type="button" data-close-picture-window="${escapeAttribute(picture.id)}" aria-label="Close ${escapeAttribute(picture.name)}" title="Close">×</button>
       <figure class="picture-frame">
         <img src="${escapeAttribute(picture.data)}" alt="${escapeAttribute(picture.name)}" />
         <figcaption>
-          <strong id="picture-window-title">${escapeHtml(picture.name)}</strong>
+          <strong id="${escapeAttribute(titleId)}">${escapeHtml(picture.name)}</strong>
           <span>${picture.uploadedAt ? escapeHtml(formatMessageTime(picture.uploadedAt)) : "Shared picture"}${picture.uploadedBy ? ` · ${escapeHtml(picture.uploadedBy)}` : ""}</span>
         </figcaption>
       </figure>
+    </section>
+  `;
+}
+
+function renderDesktopVideoWindow(videoId) {
+  const video = getDesktopVideo(videoId);
+  if (!video) return "";
+
+  const windowId = getDesktopVideoWindowId(videoId);
+  const titleId = `${windowId}-title`;
+  const hasVideoData = hasDesktopVideo(video);
+
+  return `
+    <section class="desktop-video-window mac-window" data-window-title="${escapeAttribute(video.name)}" data-draggable-window="${escapeAttribute(windowId)}" data-media-preserve-key="${escapeAttribute(getDesktopVideoMediaPreserveKey(videoId))}" style="${getWindowStyle(windowId)}" role="dialog" aria-labelledby="${escapeAttribute(titleId)}">
+      <button class="window-close" type="button" data-close-desktop-video-window="${escapeAttribute(videoId)}" aria-label="Close ${escapeAttribute(video.name)}" title="Close">×</button>
+      <div class="desktop-video-frame">
+        ${
+          hasVideoData
+            ? `<video class="desktop-video-player" controls autoplay playsinline preload="auto" data-desktop-video-player data-desktop-video-id="${escapeAttribute(videoId)}"></video>`
+            : `<div class="desktop-video-loading" role="status">Loading video...</div>`
+        }
+        <p class="desktop-video-caption">
+          <strong id="${escapeAttribute(titleId)}">${escapeHtml(video.name)}</strong>
+          <span>${video.uploadedAt ? escapeHtml(formatMessageTime(video.uploadedAt)) : "Shared video"}${video.size ? ` - ${formatFileSize(video.size)}` : ""}</span>
+        </p>
+      </div>
     </section>
   `;
 }
@@ -2393,6 +2750,7 @@ function bindEvents() {
 
   bindDesktopBackgroundEvents();
   bindDesktopPictureEvents();
+  bindDesktopVideoEvents();
   bindDesktopIconDragging();
   bindAppWindowDragging();
   bindKimchiQuestEvents();
@@ -2709,6 +3067,50 @@ function attachFacetimeArchiveVideo() {
     downloadLink.href = video.data;
     downloadLink.download = video.name || "archived-video";
   }
+}
+
+function attachDesktopVideoPlayers() {
+  document.querySelectorAll("[data-desktop-video-player]").forEach((videoElement) => {
+    const videoId = videoElement.dataset.desktopVideoId || "";
+    const video = getDesktopVideo(videoId);
+    if (!hasDesktopVideo(video)) return;
+
+    const url = getFacetimeVideoObjectUrl(video, `desktop-video:${videoId}`);
+
+    videoElement.onloadedmetadata = () => {
+      videoElement.dataset.desktopVideoLoading = "";
+    };
+
+    videoElement.oncanplay = () => {
+      videoElement.dataset.desktopVideoLoading = "";
+      playFacetimeVideo(videoElement, () => {});
+    };
+
+    videoElement.onplay = () => {
+      videoElement.dataset.facetimeUserPaused = "";
+    };
+
+    videoElement.onpause = () => {
+      if (videoElement.dataset.desktopVideoLoading === "true") return;
+      if (!videoElement.ended) videoElement.dataset.facetimeUserPaused = "true";
+    };
+
+    videoElement.onerror = () => {
+      videoElement.dataset.desktopVideoLoading = "";
+      retryFacetimeVideoSource(videoElement, video, () => {});
+    };
+
+    if (videoElement.dataset.desktopVideoSourceId !== videoId || videoElement.src !== url) {
+      videoElement.dataset.desktopVideoSourceId = videoId;
+      videoElement.dataset.facetimeFallbackTried = "";
+      videoElement.dataset.facetimeUserPaused = "";
+      videoElement.dataset.desktopVideoLoading = "true";
+      videoElement.src = url;
+      videoElement.load();
+    }
+
+    playFacetimeVideo(videoElement, () => {});
+  });
 }
 
 function playFacetimeVideo(videoElement, setStatus = setFacetimePlaybackStatus) {
@@ -3342,6 +3744,17 @@ function getDesktopTrashDeleteTarget(icon) {
     };
   }
 
+  const videoId = icon?.dataset?.openDesktopVideo || "";
+  if (videoId) {
+    return {
+      type: "video",
+      id: videoId,
+      iconId: getDesktopVideoIconId(videoId),
+      url: getDesktopVideoDeleteApiUrl(videoId),
+      label: "video",
+    };
+  }
+
   const linkId = icon?.dataset?.openDesktopLink || "";
   if (linkId) {
     return {
@@ -3455,10 +3868,18 @@ function applyDesktopTrashDelete(target, remoteData) {
       ? normalizeDesktopPictures(data.desktopPictures)
       : normalizeDesktopPictures(state.data.desktopPictures).filter((picture) => picture.id !== target.id);
 
-    if (state.pictureWindowId === target.id) {
-      state.pictureWindowId = "";
-      removeDesktopWindow(".picture-window");
-    }
+    state.pictureWindowIds = getOpenDesktopPictureWindowIds().filter((pictureId) => pictureId !== target.id);
+    removeDesktopWindow(getDesktopPictureWindowSelector(target.id));
+  }
+
+  if (target.type === "video") {
+    state.data.desktopVideos = Array.isArray(remoteData?.desktopVideos)
+      ? normalizeDesktopVideos(data.desktopVideos)
+      : normalizeDesktopVideos(state.data.desktopVideos).filter((video) => getDesktopVideoId(video) !== target.id);
+
+    state.desktopVideoWindowIds = getOpenDesktopVideoWindowIds().filter((videoId) => videoId !== target.id);
+    clearFacetimeVideoObjectUrl(`desktop-video:${target.id}`);
+    removeDesktopWindow(getDesktopVideoWindowSelector(target.id));
   }
 
   if (target.type === "link") {
@@ -3610,8 +4031,7 @@ function bindDesktopPictureEvents() {
         return;
       }
 
-      state.pictureWindowId = icon.dataset.openPicture || "";
-      mountDesktopPictureWindow();
+      openDesktopPictureWindow(icon.dataset.openPicture || "");
     });
   });
 
@@ -3620,21 +4040,95 @@ function bindDesktopPictureEvents() {
 }
 
 function bindDesktopPictureWindowEvents() {
-  document.querySelector("[data-close-picture-window]")?.addEventListener("click", () => {
-    state.pictureWindowId = "";
-    removeDesktopWindow(".picture-window");
+  document.querySelectorAll("[data-close-picture-window]").forEach((button) => {
+    if (button.dataset.pictureCloseBound === "true") return;
+    button.dataset.pictureCloseBound = "true";
+
+    button.addEventListener("click", () => {
+      closeDesktopPictureWindow(button.dataset.closePictureWindow || "");
+    });
   });
 }
 
-function mountDesktopPictureWindow() {
-  if (!state.pictureWindowId) return;
-  mountDesktopWindow(".picture-window", renderDesktopPictureWindow(state.pictureWindowId), bindDesktopPictureWindowEvents);
+function openDesktopPictureWindow(pictureId) {
+  if (!getDesktopPicture(pictureId)) return;
+
+  state.pictureWindowIds = [...getOpenDesktopPictureWindowIds().filter((id) => id !== pictureId), pictureId];
+  mountDesktopPictureWindow(pictureId);
+}
+
+function closeDesktopPictureWindow(pictureId) {
+  state.pictureWindowIds = getOpenDesktopPictureWindowIds().filter((id) => id !== pictureId);
+  removeDesktopWindow(getDesktopPictureWindowSelector(pictureId));
+}
+
+function mountDesktopPictureWindow(pictureId) {
+  if (!getDesktopPicture(pictureId)) return;
+
+  const selector = getDesktopPictureWindowSelector(pictureId);
+  removeDesktopWindow(selector);
+  mountDesktopWindow(selector, renderDesktopPictureWindow(pictureId), bindDesktopPictureWindowEvents);
+}
+
+function bindDesktopVideoEvents() {
+  document.querySelectorAll("[data-open-desktop-video]").forEach((icon) => {
+    if (icon.dataset.desktopVideoBound === "true") return;
+    icon.dataset.desktopVideoBound = "true";
+
+    icon.addEventListener("click", () => {
+      if (icon.dataset.dragMoved === "true") {
+        icon.dataset.dragMoved = "";
+        return;
+      }
+
+      openDesktopVideoWindow(icon.dataset.openDesktopVideo || "");
+    });
+  });
+
+  bindDesktopVideoWindowEvents();
+  attachDesktopVideoPlayers();
+}
+
+function bindDesktopVideoWindowEvents() {
+  document.querySelectorAll("[data-close-desktop-video-window]").forEach((button) => {
+    if (button.dataset.videoCloseBound === "true") return;
+    button.dataset.videoCloseBound = "true";
+
+    button.addEventListener("click", () => {
+      closeDesktopVideoWindow(button.dataset.closeDesktopVideoWindow || "");
+    });
+  });
+}
+
+function openDesktopVideoWindow(videoId) {
+  if (!getDesktopVideo(videoId)) return;
+
+  state.desktopVideoWindowIds = [...getOpenDesktopVideoWindowIds().filter((id) => id !== videoId), videoId];
+  mountDesktopVideoWindow(videoId);
+  loadDesktopVideo(videoId, { renderAfter: true });
+}
+
+function closeDesktopVideoWindow(videoId) {
+  state.desktopVideoWindowIds = getOpenDesktopVideoWindowIds().filter((id) => id !== videoId);
+  clearFacetimeVideoObjectUrl(`desktop-video:${videoId}`);
+  removeDesktopWindow(getDesktopVideoWindowSelector(videoId));
+}
+
+function mountDesktopVideoWindow(videoId) {
+  if (!getDesktopVideo(videoId)) return;
+
+  const selector = getDesktopVideoWindowSelector(videoId);
+  removeDesktopWindow(selector);
+  mountDesktopWindow(selector, renderDesktopVideoWindow(videoId), () => {
+    bindDesktopVideoWindowEvents();
+    attachDesktopVideoPlayers();
+  });
 }
 
 function bindDesktopPictureDropEvents(desktop) {
   ["dragenter", "dragover"].forEach((eventName) => {
     desktop.addEventListener(eventName, (event) => {
-      if (isSpecialDesktopDropTarget(event.target) || !hasDesktopPictureDrag(event.dataTransfer)) return;
+      if (isSpecialDesktopDropTarget(event.target) || !hasDesktopMediaDrag(event.dataTransfer)) return;
       event.preventDefault();
       desktop.classList.add("is-picture-drag-over");
     });
@@ -3650,15 +4144,19 @@ function bindDesktopPictureDropEvents(desktop) {
   desktop.addEventListener("drop", (event) => {
     if (isSpecialDesktopDropTarget(event.target)) return;
 
-    if (!hasDesktopPictureDrag(event.dataTransfer)) return;
+    if (!hasDesktopMediaDrag(event.dataTransfer)) return;
 
     event.preventDefault();
     desktop.classList.remove("is-picture-drag-over");
 
     const file = getFirstImageFile(event.dataTransfer?.files);
-    if (!file) return;
+    if (file) {
+      addDesktopPictureFromFile(file);
+      return;
+    }
 
-    addDesktopPictureFromFile(file);
+    const videoFile = getFirstVideoFile(event.dataTransfer?.files);
+    if (videoFile) addDesktopVideoFromFile(videoFile);
   });
 }
 
@@ -3670,12 +4168,20 @@ function hasImageFile(files) {
   return Boolean(getFirstImageFile(files));
 }
 
-function hasDesktopPictureDrag(dataTransfer) {
-  return hasImageFile(dataTransfer?.files) || Array.from(dataTransfer?.types || []).includes("Files");
+function hasDesktopMediaDrag(dataTransfer) {
+  return hasImageFile(dataTransfer?.files) || hasVideoFile(dataTransfer?.files) || Array.from(dataTransfer?.types || []).includes("Files");
 }
 
 function getFirstImageFile(files) {
   return Array.from(files || []).find(isImageFile) || null;
+}
+
+function hasVideoFile(files) {
+  return Boolean(getFirstVideoFile(files));
+}
+
+function getFirstVideoFile(files) {
+  return Array.from(files || []).find(isVideoFile) || null;
 }
 
 function bindAppWindowDragging() {
@@ -3690,6 +4196,7 @@ function bindAppWindowDragging() {
     let baseY = 0;
 
     windowElement.addEventListener("pointerdown", (event) => {
+      if (event.button === 0) bringWindowToFront(windowElement.dataset.draggableWindow, windowElement);
       if (event.button !== 0 || !isWindowTitleBarPointer(event, windowElement)) return;
 
       const id = windowElement.dataset.draggableWindow;
@@ -3870,13 +4377,54 @@ async function addDesktopPictureFromFile(file) {
   };
 
   state.data.desktopPictures = mergeDesktopPictures(state.data.desktopPictures, [picture]);
-  state.pictureWindowId = id;
+  state.pictureWindowIds = [...getOpenDesktopPictureWindowIds().filter((pictureId) => pictureId !== id), id];
   saveLocalData();
   render();
 
   await saveRemoteData({ includeDesktopPictures: true });
   if (!state.remoteReady) scheduleRemoteSave({ includeDesktopPictures: true });
   if (getDesktopPicture(id)) render();
+}
+
+async function addDesktopVideoFromFile(file) {
+  if (!isVideoFile(file)) return;
+
+  if (file.size > FACETIME_VIDEO_MAX_BYTES) {
+    window.alert(`That video is ${formatFileSize(file.size)}. Please use ${formatFileSize(FACETIME_VIDEO_MAX_BYTES)} or less.`);
+    return;
+  }
+
+  const user = getUser();
+  const id = createMessageId(user?.id || "video");
+
+  try {
+    const type = getVideoMimeType(file);
+    const data = normalizeVideoDataUrl(await readBlobAsDataUrl(file), type);
+    if (!data.startsWith("data:video/")) throw new Error("Video could not be prepared.");
+
+    const video = normalizeDesktopVideo({
+      id,
+      videoId: id,
+      data,
+      name: file.name || "Desktop video",
+      type,
+      size: file.size,
+      uploadedBy: user?.name || "Daily Dozen",
+      uploadedAt: new Date().toISOString(),
+    });
+    if (!hasDesktopVideo(video)) throw new Error("Video could not be prepared.");
+
+    state.data.desktopVideos = mergeDesktopVideos(state.data.desktopVideos, [video]);
+    state.desktopVideoWindowIds = [...getOpenDesktopVideoWindowIds().filter((videoId) => videoId !== id), id];
+    saveLocalData();
+    render();
+
+    await saveRemoteData({ includeDesktopVideos: true, desktopVideoId: id });
+    if (!state.remoteReady) scheduleRemoteSave({ includeDesktopVideos: true, desktopVideoId: id });
+    if (getDesktopVideo(id)) render();
+  } catch {
+    window.alert("That video could not be saved.");
+  }
 }
 
 function isImageFile(file) {

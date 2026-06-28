@@ -5,6 +5,7 @@ const FACETIME_ARCHIVE_KEY_PREFIX = "facetime-video-archive:v1:";
 const FACETIME_ARCHIVE_INDEX_KEY_PREFIX = "facetime-video-archive-index:v1:";
 const SHARED_DELETE_PASSWORD_HASH = "b493d48364afe44d11c0165cf470a4164d1e2609911ef998be868d46ade3de4e";
 const DESKTOP_PICTURE_KEY_PREFIX = "desktop-picture:v1:";
+const DESKTOP_VIDEO_KEY_PREFIX = "desktop-video:v1:";
 
 const DEFAULT_ITEMS = [
   "Exercise",
@@ -28,6 +29,7 @@ const HEADERS = {
 
 const DEFAULT_WALLPAPER_MODE = "tile";
 const DESKTOP_PICTURE_LIMIT = 12;
+const DESKTOP_VIDEO_LIMIT = 12;
 const USER_IDS = ["you", "wife"];
 const USER_NAMES = {
   you: "Scotty P.",
@@ -61,6 +63,12 @@ export async function onRequestGet({ request, env }) {
     return json({ video });
   }
 
+  const requestedDesktopVideoId = url.searchParams.get("desktopVideo");
+  if (requestedDesktopVideoId) {
+    const video = await getStoredDesktopVideo(store, requestedDesktopVideoId);
+    return json({ video });
+  }
+
   const includeMedia = url.searchParams.get("media") !== "lite";
   const data = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia });
   return json({ data });
@@ -76,8 +84,10 @@ export async function onRequestPost({ request, env }) {
     const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia: true });
     const facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos);
     const desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures);
-    const data = mergeStoredData(storedData, incomingData, facetimeVideos, desktopPictures);
+    const desktopVideos = mergeDesktopVideos(storedData.desktopVideos, incomingData.desktopVideos);
+    const data = mergeStoredData(storedData, incomingData, facetimeVideos, desktopPictures, desktopVideos);
     await putDesktopPictures(store, incomingData.desktopPictures);
+    await putDesktopVideos(store, incomingData.desktopVideos);
     await archiveReplacedFacetimeVideos(store, storedData.facetimeVideos, incomingData.facetimeVideos);
     await putFacetimeVideos(store, incomingData.facetimeVideos);
     await store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data)));
@@ -126,6 +136,12 @@ export async function onRequestDelete({ request, env }) {
     return json({ data: getStateDataForResponse(data, { includeMedia: false }) });
   }
 
+  const desktopVideoId = normalizeShortText(url.searchParams.get("desktopVideo"), "", 96);
+  if (desktopVideoId) {
+    const data = await deleteStoredDesktopVideo(store, desktopVideoId);
+    return json({ data: getStateDataForResponse(data, { includeMedia: false }) });
+  }
+
   return json({ error: "Delete target required." }, 400);
 }
 
@@ -144,6 +160,7 @@ function normalizeData(data) {
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
     desktopPictures: normalizeDesktopPictures(data?.desktopPictures),
+    desktopVideos: normalizeDesktopVideos(data?.desktopVideos),
     desktopLinks: normalizeDesktopLinks(data?.desktopLinks),
     facetimeVideos: normalizeFacetimeVideos(data?.facetimeVideos, data?.facetimeVideo),
   };
@@ -151,13 +168,16 @@ function normalizeData(data) {
 
 async function hydrateStoredData(store, stored, { includeMedia = true } = {}) {
   const storedPictureMeta = normalizeDesktopPictureMetadataList(stored?.desktopPictures);
+  const storedVideoMeta = normalizeDesktopVideoMetadataList(stored?.desktopVideos);
   const stateData = normalizeData(stored);
   const storedPictures = await getStoredDesktopPictures(store, storedPictureMeta);
+  const storedDesktopVideos = includeMedia ? await getStoredDesktopVideos(store, storedVideoMeta) : storedVideoMeta;
   const storedVideos = includeMedia ? await getStoredFacetimeVideos(store) : await getStoredFacetimeVideoMetadata(store);
 
   return {
     ...stateData,
     desktopPictures: mergeDesktopPictures(stateData.desktopPictures, storedPictures),
+    desktopVideos: mergeDesktopVideos(stateData.desktopVideos, storedDesktopVideos),
     facetimeVideos: mergeFacetimeVideos(stateData.facetimeVideos, storedVideos),
   };
 }
@@ -167,6 +187,7 @@ function mergeStoredData(
   incomingData,
   facetimeVideos = mergeFacetimeVideos(storedData.facetimeVideos, incomingData.facetimeVideos),
   desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures),
+  desktopVideos = mergeDesktopVideos(storedData.desktopVideos, incomingData.desktopVideos),
 ) {
   const shared = mergeSharedNoteState(storedData, incomingData);
 
@@ -180,6 +201,7 @@ function mergeStoredData(
     wallpaperMode: incomingData.wallpaperMode || storedData.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(storedData.iconPositions, incomingData.iconPositions),
     desktopPictures,
+    desktopVideos,
     desktopLinks: mergeDesktopLinks(storedData.desktopLinks, incomingData.desktopLinks),
     facetimeVideos,
   };
@@ -189,6 +211,7 @@ function getStateDataForStorage(data) {
   return {
     ...data,
     desktopPictures: getDesktopPictureMetadataList(data.desktopPictures),
+    desktopVideos: getDesktopVideoMetadataList(data.desktopVideos),
     facetimeVideos: getFacetimeVideoMetadataMap(data.facetimeVideos),
   };
 }
@@ -196,6 +219,7 @@ function getStateDataForStorage(data) {
 function getStateDataForResponse(data, { includeMedia = true } = {}) {
   return {
     ...data,
+    desktopVideos: includeMedia ? data.desktopVideos : getDesktopVideoMetadataList(data.desktopVideos),
     facetimeVideos: includeMedia ? data.facetimeVideos : getFacetimeVideoMetadataMap(data.facetimeVideos),
   };
 }
@@ -380,12 +404,67 @@ async function deleteStoredDesktopLink(store, linkId) {
   return data;
 }
 
+async function getStoredDesktopVideo(store, videoId) {
+  const normalizedId = normalizeShortText(videoId, "", 96);
+  if (!normalizedId) return {};
+
+  return normalizeDesktopVideo(await store.get(getDesktopVideoKey(normalizedId), "json"));
+}
+
+async function getStoredDesktopVideos(store, videoMeta) {
+  const entries = await Promise.all(
+    normalizeDesktopVideoMetadataList(videoMeta).map(async (meta) => {
+      const stored = await store.get(getDesktopVideoKey(meta.id), "json");
+      return normalizeDesktopVideo({ ...meta, ...(stored || {}) });
+    }),
+  );
+
+  return entries.filter(hasDesktopVideoRecord);
+}
+
+async function putDesktopVideos(store, videos) {
+  await Promise.all(
+    normalizeDesktopVideos(videos)
+      .filter(hasDesktopVideo)
+      .map((video) => {
+        return store.put(getDesktopVideoKey(getDesktopVideoId(video)), JSON.stringify(video));
+      }),
+  );
+}
+
+async function deleteStoredDesktopVideo(store, videoId) {
+  const normalizedId = normalizeShortText(videoId, "", 96);
+  const storedData = await hydrateStoredData(store, await store.get(STORAGE_KEY, "json"), { includeMedia: true });
+  if (!normalizedId) return storedData;
+
+  const data = {
+    ...storedData,
+    desktopVideos: normalizeDesktopVideos(storedData.desktopVideos).filter((video) => getDesktopVideoId(video) !== normalizedId),
+    iconPositions: removeIconPosition(storedData.iconPositions, getDesktopVideoIconId(normalizedId)),
+  };
+
+  await Promise.all([
+    store.delete(getDesktopVideoKey(normalizedId)),
+    store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data))),
+  ]);
+
+  return data;
+}
+
 function getDesktopPictureKey(id) {
   return `${DESKTOP_PICTURE_KEY_PREFIX}${encodeURIComponent(id)}`;
 }
 
+function getDesktopVideoKey(id) {
+  return `${DESKTOP_VIDEO_KEY_PREFIX}${encodeURIComponent(id)}`;
+}
+
 function getDesktopPictureIconId(pictureId) {
   return `desktop-picture-${pictureId}`;
+}
+
+function getDesktopVideoIconId(videoId) {
+  return `desktop-video-${videoId}`;
 }
 
 function getDesktopLinkIconId(linkId) {
@@ -404,6 +483,98 @@ function mergeDesktopPictures(storedPictures, incomingPictures) {
   });
 
   return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function normalizeDesktopVideos(value) {
+  if (!Array.isArray(value)) return [];
+
+  const videosById = new Map();
+  value.map(normalizeDesktopVideo).forEach((video) => {
+    const videoId = getDesktopVideoId(video);
+    if (hasDesktopVideoRecord(video) && videoId) videosById.set(videoId, video);
+  });
+
+  return [...videosById.values()].slice(-DESKTOP_VIDEO_LIMIT);
+}
+
+function normalizeDesktopVideo(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const type = normalizeVideoMimeType(value.type, value.name);
+  const data = normalizeVideoDataUrl(value.data, type);
+  const uploadedAt = normalizeShortText(value.uploadedAt, "", 48);
+  const id =
+    normalizeShortText(value.id || value.videoId, "", 96) ||
+    uploadedAt ||
+    (data.startsWith("data:video/") ? `${data.length}-${data.slice(-36)}` : "");
+  if (!id && !data.startsWith("data:video/")) return {};
+
+  return {
+    id,
+    videoId: id,
+    data,
+    name: normalizeShortText(value.name, "Desktop video", 96),
+    type,
+    size: Number.isFinite(Number(value.size)) ? Math.max(0, Math.round(Number(value.size))) : 0,
+    uploadedBy: normalizeShortText(value.uploadedBy, "Daily Dozen", 80),
+    uploadedAt,
+  };
+}
+
+function normalizeDesktopVideoMetadataList(value) {
+  return normalizeDesktopVideos(value).map(getDesktopVideoMetadata).filter(hasDesktopVideoRecord);
+}
+
+function hasDesktopVideo(video) {
+  return Boolean(video?.data);
+}
+
+function hasDesktopVideoRecord(video) {
+  return Boolean(video?.data || getDesktopVideoId(video));
+}
+
+function getDesktopVideoId(video) {
+  return video?.id || video?.videoId || video?.uploadedAt || "";
+}
+
+function getDesktopVideoMetadata(video) {
+  const normalized = normalizeDesktopVideo(video);
+  if (!hasDesktopVideoRecord(normalized)) return {};
+  const { data, ...metadata } = normalized;
+  return metadata;
+}
+
+function getDesktopVideoMetadataList(videos) {
+  return normalizeDesktopVideos(videos).map(getDesktopVideoMetadata).filter(hasDesktopVideoRecord);
+}
+
+function mergeDesktopVideos(storedVideos, incomingVideos) {
+  const videosById = new Map();
+
+  normalizeDesktopVideos(storedVideos).forEach((video) => {
+    videosById.set(getDesktopVideoId(video), video);
+  });
+
+  normalizeDesktopVideos(incomingVideos).forEach((video) => {
+    const videoId = getDesktopVideoId(video);
+    videosById.set(videoId, mergeDesktopVideoRecord(videosById.get(videoId), video));
+  });
+
+  return [...videosById.values()].slice(-DESKTOP_VIDEO_LIMIT);
+}
+
+function mergeDesktopVideoRecord(current, incoming) {
+  const currentVideo = normalizeDesktopVideo(current);
+  const incomingVideo = normalizeDesktopVideo(incoming);
+
+  if (!hasDesktopVideoRecord(currentVideo)) return incomingVideo;
+  if (!hasDesktopVideoRecord(incomingVideo)) return currentVideo;
+
+  return {
+    ...currentVideo,
+    ...incomingVideo,
+    data: incomingVideo.data || currentVideo.data || "",
+  };
 }
 
 function normalizeDesktopLinks(value) {
