@@ -1,6 +1,8 @@
 const STORAGE_KEY = "state:v1";
 const FACETIME_VIDEO_KEY_PREFIX = "facetime-video:v1:";
 const FACETIME_VIDEO_META_KEY_PREFIX = "facetime-video-meta:v1:";
+const FACETIME_ARCHIVE_KEY_PREFIX = "facetime-video-archive:v1:";
+const FACETIME_ARCHIVE_INDEX_KEY_PREFIX = "facetime-video-archive-index:v1:";
 const DESKTOP_PICTURE_KEY_PREFIX = "desktop-picture:v1:";
 
 const DEFAULT_ITEMS = [
@@ -56,6 +58,21 @@ async function handleStateRequest(request, env) {
       return json({ video });
     }
 
+    const requestedArchiveUserId = url.searchParams.get("facetimeArchive");
+    if (requestedArchiveUserId) {
+      if (!USER_IDS.includes(requestedArchiveUserId)) return json({ error: "Unknown FaceTime archive user." }, 404);
+      const archive = await getStoredFacetimeArchive(store, requestedArchiveUserId);
+      return json({ archive });
+    }
+
+    const requestedArchiveVideoUserId = url.searchParams.get("facetimeArchiveVideo");
+    if (requestedArchiveVideoUserId) {
+      if (!USER_IDS.includes(requestedArchiveVideoUserId)) return json({ error: "Unknown FaceTime archive user." }, 404);
+      const videoId = url.searchParams.get("videoId") || "";
+      const video = await getStoredFacetimeArchiveVideo(store, requestedArchiveVideoUserId, videoId);
+      return json({ video });
+    }
+
     const includeMedia = url.searchParams.get("media") !== "lite";
     const stored = await store.get(STORAGE_KEY, "json");
     const data = await hydrateStoredData(store, stored, { includeMedia });
@@ -71,6 +88,7 @@ async function handleStateRequest(request, env) {
       const desktopPictures = mergeDesktopPictures(storedData.desktopPictures, incomingData.desktopPictures);
       const data = mergeStoredData(storedData, incomingData, facetimeVideos, desktopPictures);
       await putDesktopPictures(store, incomingData.desktopPictures);
+      await archiveReplacedFacetimeVideos(store, storedData.facetimeVideos, incomingData.facetimeVideos);
       await putFacetimeVideos(store, incomingData.facetimeVideos);
       await store.put(STORAGE_KEY, JSON.stringify(getStateDataForStorage(data)));
       return json({ data: getStateDataForResponse(data, { includeMedia: false }) });
@@ -390,6 +408,66 @@ async function putFacetimeVideos(store, videos) {
   );
 }
 
+async function archiveReplacedFacetimeVideos(store, storedVideos, incomingVideos) {
+  await Promise.all(
+    Object.entries(normalizeFacetimeVideos(incomingVideos)).map(async ([userId, incomingVideo]) => {
+      if (!hasFacetimeVideo(incomingVideo)) return;
+
+      const storedVideo = normalizeFacetimeVideo(storedVideos?.[userId], userId);
+      if (!hasFacetimeVideo(storedVideo)) return;
+      if (getFacetimeVideoId(storedVideo) === getFacetimeVideoId(incomingVideo)) return;
+
+      await putArchivedFacetimeVideo(store, userId, storedVideo);
+    }),
+  );
+}
+
+async function getStoredFacetimeArchive(store, userId) {
+  return normalizeFacetimeArchiveList(await store.get(getFacetimeArchiveIndexKey(userId), "json"));
+}
+
+async function getStoredFacetimeArchiveVideo(store, userId, videoId) {
+  const normalizedId = normalizeShortText(videoId, "", 96);
+  if (!normalizedId) return {};
+
+  return normalizeFacetimeVideo(await store.get(getFacetimeArchiveVideoKey(userId, normalizedId), "json"), userId);
+}
+
+async function putArchivedFacetimeVideo(store, userId, video) {
+  const archivedVideo = normalizeFacetimeVideo(video, userId);
+  if (!hasFacetimeVideo(archivedVideo)) return;
+
+  const videoId = getFacetimeVideoId(archivedVideo);
+  if (!videoId) return;
+
+  const archiveKey = getFacetimeArchiveVideoKey(userId, videoId);
+  const indexKey = getFacetimeArchiveIndexKey(userId);
+  const metadata = getFacetimeVideoMetadata(archivedVideo);
+  const archive = [
+    metadata,
+    ...(await getStoredFacetimeArchive(store, userId)).filter((entry) => getFacetimeVideoId(entry) !== videoId),
+  ];
+
+  await store.put(archiveKey, JSON.stringify(archivedVideo));
+  await store.put(indexKey, JSON.stringify(archive));
+}
+
+function normalizeFacetimeArchiveList(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((entry) => getFacetimeVideoMetadata(entry))
+    .filter(hasFacetimeVideoRecord);
+}
+
+function getFacetimeArchiveIndexKey(userId) {
+  return `${FACETIME_ARCHIVE_INDEX_KEY_PREFIX}${userId}`;
+}
+
+function getFacetimeArchiveVideoKey(userId, videoId) {
+  return `${FACETIME_ARCHIVE_KEY_PREFIX}${userId}:${encodeURIComponent(videoId)}`;
+}
+
 function mergeFacetimeVideos(storedVideos, incomingVideos) {
   const merged = { ...(storedVideos || {}) };
 
@@ -498,7 +576,7 @@ function normalizeVideoDataUrl(dataUrl, type) {
 }
 
 function normalizeVideoMimeType(type, name = "") {
-  const cleanType = normalizeShortText(type, "", 48).toLowerCase();
+  const cleanType = normalizeShortText(type, "", 64).toLowerCase().split(";")[0].trim();
   if (/\.webm$/i.test(name)) return "video/webm";
   if (/\.ogv$/i.test(name)) return "video/ogg";
   if (/\.(mp4|m4v|mov)$/i.test(name)) return "video/mp4";

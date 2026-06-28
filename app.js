@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-27 03:28:44 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-27 07:39:42 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -64,6 +64,7 @@ const DEFAULT_WALLPAPER_MODE = "tile";
 const KIMCHI_QUEST_MAX_BITES = 5;
 const MONKEY_VIDEO_URL = "assets/proboscis-monkey.mp4";
 const FACETIME_VIDEO_MAX_BYTES = 8 * 1024 * 1024;
+const FACETIME_RECORDING_MAX_MS = 20000;
 const UKULELE_VIDEOS = [
   {
     watch: "https://www.youtube.com/watch?v=Xl-BNTeJXjw",
@@ -87,10 +88,15 @@ const app = document.querySelector("#app");
 let remoteSaveTimer;
 let remoteSaveOptions = {};
 let remoteSyncTimer;
-let facetimeSharedVideoUrl = "";
-let facetimeSharedVideoData = "";
-let facetimeSharedVideoKey = "";
+const facetimeVideoUrlCache = {};
 const facetimeVideoLoads = {};
+const facetimeArchiveLoads = {};
+const facetimeArchiveVideoLoads = {};
+let facetimeRecorder = null;
+let facetimeRecordingStream = null;
+let facetimeRecordingChunks = [];
+let facetimeRecordingTimer = null;
+let facetimeRecordingDiscard = false;
 
 const state = {
   currentUserId: sessionStorage.getItem(SESSION_KEY),
@@ -114,9 +120,16 @@ const state = {
   seedWindow: "",
   pictureWindowId: "",
   facetimeWindowOpen: false,
+  facetimeArchiveOpen: false,
+  facetimeArchiveOwnerId: "",
+  facetimeArchiveVideoId: "",
+  facetimeArchive: {},
+  facetimeArchiveStatus: "",
   facetimeUploadStatus: "",
   facetimeMode: "shared",
   facetimePlaybackStatus: "",
+  facetimeRecordingActive: false,
+  facetimeRecordingStatus: "",
   windowPositions: {},
 };
 
@@ -339,6 +352,31 @@ function normalizeFacetimeVideo(value, fallbackUserId = "") {
   };
 }
 
+function normalizeFacetimeArchiveList(value, fallbackUserId = "") {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set();
+  return value
+    .map((entry) => normalizeFacetimeVideo(entry, fallbackUserId))
+    .filter((entry) => {
+      const videoId = getFacetimeVideoId(entry);
+      if (!hasFacetimeVideoRecord(entry) || !videoId || seen.has(videoId)) return false;
+      seen.add(videoId);
+      return true;
+    });
+}
+
+function mergeFacetimeArchiveEntry(list, video, fallbackUserId = "") {
+  const entry = normalizeFacetimeVideo(video, fallbackUserId);
+  const videoId = getFacetimeVideoId(entry);
+  if (!hasFacetimeVideoRecord(entry) || !videoId) return normalizeFacetimeArchiveList(list, fallbackUserId);
+
+  return [
+    entry,
+    ...normalizeFacetimeArchiveList(list, fallbackUserId).filter((candidate) => getFacetimeVideoId(candidate) !== videoId),
+  ];
+}
+
 function inferFacetimeUploaderId(video) {
   if (USERS.some((user) => user.id === video.uploadedUserId)) return video.uploadedUserId;
   const uploadedBy = String(video.uploadedBy || "").trim().toLowerCase();
@@ -441,6 +479,14 @@ function getRemoteStateUrl({ includeMedia = false } = {}) {
 
 function getFacetimeVideoApiUrl(userId) {
   return `${API_STATE_URL}?facetimeVideo=${encodeURIComponent(userId || "")}`;
+}
+
+function getFacetimeArchiveApiUrl(userId) {
+  return `${API_STATE_URL}?facetimeArchive=${encodeURIComponent(userId || "")}`;
+}
+
+function getFacetimeArchiveVideoApiUrl(userId, videoId) {
+  return `${API_STATE_URL}?facetimeArchiveVideo=${encodeURIComponent(userId || "")}&videoId=${encodeURIComponent(videoId || "")}`;
 }
 
 function getDataForRemoteSave(data, options = {}) {
@@ -951,6 +997,120 @@ async function loadFacetimeVideoForUser(userId, { renderAfter = false } = {}) {
   return facetimeVideoLoads[userId];
 }
 
+function getFacetimeArchiveOwner() {
+  return USERS.find((user) => user.id === state.facetimeArchiveOwnerId) || getVisibleFacetimeOwner() || getUser() || USERS[0];
+}
+
+function getFacetimeArchiveList(userId = getFacetimeArchiveOwner()?.id) {
+  return normalizeFacetimeArchiveList(state.facetimeArchive?.[userId], userId);
+}
+
+function getSelectedFacetimeArchiveVideo() {
+  const owner = getFacetimeArchiveOwner();
+  if (!owner || !state.facetimeArchiveVideoId) return {};
+
+  return getFacetimeArchiveList(owner.id).find((video) => getFacetimeVideoId(video) === state.facetimeArchiveVideoId) || {};
+}
+
+async function loadFacetimeArchive(userId, { renderAfter = false, force = false } = {}) {
+  if (!userId) return [];
+  if (!force && state.facetimeArchive?.[userId]) return getFacetimeArchiveList(userId);
+  if (facetimeArchiveLoads[userId]) return facetimeArchiveLoads[userId];
+
+  state.facetimeArchiveStatus = "Loading archive...";
+
+  facetimeArchiveLoads[userId] = fetch(getFacetimeArchiveApiUrl(userId), {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Archive load failed: ${response.status}`);
+      const payload = await response.json();
+      state.facetimeArchive ||= {};
+      state.facetimeArchive[userId] = normalizeFacetimeArchiveList(payload.archive, userId);
+      state.facetimeArchiveStatus = "";
+      state.remoteReady = true;
+      state.remoteStatus = "synced";
+      state.remoteError = "";
+
+      if (renderAfter && state.facetimeArchiveOpen && getFacetimeArchiveOwner()?.id === userId) {
+        render();
+      } else {
+        updateSyncIndicator();
+      }
+
+      return getFacetimeArchiveList(userId);
+    })
+    .catch((error) => {
+      state.remoteReady = false;
+      state.remoteStatus = "local";
+      state.remoteError = error.message || "Archive load failed.";
+      state.facetimeArchiveStatus = "Could not load archive.";
+      updateSyncIndicator();
+      return [];
+    })
+    .finally(() => {
+      delete facetimeArchiveLoads[userId];
+    });
+
+  return facetimeArchiveLoads[userId];
+}
+
+async function loadFacetimeArchiveVideo(userId, videoId, { renderAfter = false } = {}) {
+  if (!userId || !videoId) return null;
+
+  const currentVideo = getFacetimeArchiveList(userId).find((video) => getFacetimeVideoId(video) === videoId);
+  if (hasFacetimeVideo(currentVideo)) return currentVideo;
+
+  const loadKey = `${userId}:${videoId}`;
+  if (facetimeArchiveVideoLoads[loadKey]) return facetimeArchiveVideoLoads[loadKey];
+
+  state.facetimeArchiveStatus = "Loading archived video...";
+
+  facetimeArchiveVideoLoads[loadKey] = fetch(getFacetimeArchiveVideoApiUrl(userId, videoId), {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Archived video load failed: ${response.status}`);
+      const payload = await response.json();
+      const loadedVideo = normalizeFacetimeVideo(payload.video, userId);
+      if (!hasFacetimeVideoRecord(loadedVideo)) return null;
+
+      state.facetimeArchive ||= {};
+      state.facetimeArchive[userId] = mergeFacetimeArchiveEntry(state.facetimeArchive[userId], loadedVideo, userId);
+      state.facetimeArchiveStatus = "";
+      state.remoteReady = true;
+      state.remoteStatus = "synced";
+      state.remoteError = "";
+
+      if (renderAfter && state.facetimeArchiveOpen && getFacetimeArchiveOwner()?.id === userId) {
+        render();
+      } else {
+        updateSyncIndicator();
+      }
+
+      return loadedVideo;
+    })
+    .catch((error) => {
+      state.remoteReady = false;
+      state.remoteStatus = "local";
+      state.remoteError = error.message || "Archived video load failed.";
+      state.facetimeArchiveStatus = "Could not load archived video.";
+      updateSyncIndicator();
+      return null;
+    })
+    .finally(() => {
+      delete facetimeArchiveVideoLoads[loadKey];
+    });
+
+  return facetimeArchiveVideoLoads[loadKey];
+}
+
 function renderFacetimeBadge() {
   return getFacetimeUnreadStatus().unread ? `<span class="desktop-badge" data-facetime-badge aria-label="1 new video">1</span>` : "";
 }
@@ -1143,7 +1303,7 @@ function render() {
 }
 
 function collectPreservedMediaWindows() {
-  return ["facetime", "monkey-see-genevieve-do", "ulaylee"]
+  return ["facetime", "facetime-archive", "monkey-see-genevieve-do", "ulaylee"]
     .map((id) => {
       const node = document.querySelector(`[data-draggable-window="${id}"]`);
 
@@ -1229,6 +1389,10 @@ function getMediaWindowPreserveKey(id) {
     return getFacetimeMediaPreserveKey();
   }
 
+  if (id === "facetime-archive") {
+    return getFacetimeArchiveMediaPreserveKey();
+  }
+
   if (id === "monkey-see-genevieve-do") {
     return state.monkeyWindowOpen ? "monkey-see-genevieve-do" : "";
   }
@@ -1244,6 +1408,13 @@ function getFacetimeMediaPreserveKey() {
   const owner = getVisibleFacetimeOwner();
   const videoId = getVisibleFacetimeVideoId();
   return state.facetimeWindowOpen && owner && videoId ? `facetime:${state.facetimeMode}:${owner.id}:${videoId}` : "";
+}
+
+function getFacetimeArchiveMediaPreserveKey() {
+  const owner = getFacetimeArchiveOwner();
+  const video = getSelectedFacetimeArchiveVideo();
+  const videoId = getFacetimeVideoId(video);
+  return state.facetimeArchiveOpen && owner && hasFacetimeVideo(video) ? `facetime-archive:${owner.id}:${videoId}` : "";
 }
 
 function renderMediaWindowSlot(id, preservedMediaIds, html) {
@@ -1360,6 +1531,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
         ${state.seedWindow ? renderSeedWindow(state.seedWindow) : ""}
         ${state.pictureWindowId ? renderDesktopPictureWindow(state.pictureWindowId) : ""}
         ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
+        ${state.facetimeArchiveOpen ? renderMediaWindowSlot("facetime-archive", preservedMediaIds, renderFacetimeArchiveWindow()) : ""}
       </div>
     </div>
   `;
@@ -1723,9 +1895,17 @@ function renderFacetimeWindow() {
         <h2 id="facetime-title">FaceTime</h2>
         <p data-facetime-status>${escapeHtml(status)}</p>
       </div>
-      <div class="facetime-mode-switch" role="group" aria-label="FaceTime view">
-        <button class="facetime-mode-button ${!viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="shared" aria-pressed="${!viewingMine}">${escapeHtml(partnerVideoLabel)}</button>
-        <button class="facetime-mode-button ${viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="mine" aria-pressed="${viewingMine}">My video</button>
+      <div class="facetime-toolbar">
+        <div class="facetime-mode-switch" role="group" aria-label="FaceTime view">
+          <button class="facetime-mode-button ${!viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="shared" aria-pressed="${!viewingMine}">${escapeHtml(partnerVideoLabel)}</button>
+          <button class="facetime-mode-button ${viewingMine ? "is-active" : ""}" type="button" data-facetime-mode="mine" aria-pressed="${viewingMine}">My video</button>
+        </div>
+        <button class="facetime-archive-link" type="button" data-open-facetime-archive>Archive</button>
+      </div>
+      <div class="facetime-actions" data-facetime-recording-controls>
+        <button class="facetime-record-button" type="button" data-start-facetime-recording ${state.facetimeRecordingActive || !canUseBrowserRecorder() ? "disabled" : ""}>Record video</button>
+        <button class="facetime-record-button" type="button" data-stop-facetime-recording ${state.facetimeRecordingActive ? "" : "disabled"}>Stop</button>
+        <span data-facetime-recording-status>${escapeHtml(state.facetimeRecordingStatus)}</span>
       </div>
       ${
         hasVideo
@@ -1741,6 +1921,64 @@ function renderFacetimeWindow() {
             </div>
           `
       }
+    </section>
+  `;
+}
+
+function renderFacetimeArchiveWindow() {
+  const owner = getFacetimeArchiveOwner();
+  const archive = getFacetimeArchiveList(owner?.id);
+  const selectedVideo = getSelectedFacetimeArchiveVideo();
+  const selectedVideoId = getFacetimeVideoId(selectedVideo);
+  const hasSelectedVideo = hasFacetimeVideo(selectedVideo);
+  const mediaPreserveKey = hasSelectedVideo ? getFacetimeArchiveMediaPreserveKey() : "";
+  const status = state.facetimeArchiveStatus || (archive.length ? `${archive.length} saved` : "No archived videos yet.");
+
+  return `
+    <section class="facetime-archive-window mac-window" data-window-title="FaceTime Archive" data-draggable-window="facetime-archive" data-media-preserve-key="${escapeAttribute(mediaPreserveKey)}" style="${getWindowStyle("facetime-archive")}" role="dialog" aria-labelledby="facetime-archive-title">
+      <button class="window-close" type="button" data-close-facetime-archive aria-label="Close FaceTime archive" title="Close">×</button>
+      <div class="facetime-window-header">
+        <p class="eyebrow">${escapeHtml(owner?.name || "Daily Dozen")}</p>
+        <h2 id="facetime-archive-title">FaceTime Archive</h2>
+        <p data-facetime-archive-status>${escapeHtml(status)}</p>
+      </div>
+      <div class="facetime-archive-owner-switch" role="group" aria-label="Archive owner">
+        ${USERS.map(
+          (user) => `
+            <button class="facetime-mode-button ${owner?.id === user.id ? "is-active" : ""}" type="button" data-facetime-archive-owner="${user.id}" aria-pressed="${owner?.id === user.id}">${escapeHtml(user.name)}</button>
+          `,
+        ).join("")}
+      </div>
+      <div class="facetime-archive-body">
+        <div class="facetime-archive-list">
+          ${
+            archive.length
+              ? archive
+                  .map((video) => {
+                    const videoId = getFacetimeVideoId(video);
+                    return `
+                      <button class="facetime-archive-item ${videoId === selectedVideoId ? "is-active" : ""}" type="button" data-play-facetime-archive-video="${escapeAttribute(videoId)}" aria-pressed="${videoId === selectedVideoId}">
+                        <strong>${escapeHtml(video.name || "Archived video")}</strong>
+                        <span>${video.uploadedAt ? escapeHtml(formatMessageTime(video.uploadedAt)) : "Saved video"}${video.size ? ` · ${formatFileSize(video.size)}` : ""}</span>
+                      </button>
+                    `;
+                  })
+                  .join("")
+              : `<div class="facetime-archive-empty">Archive is empty.</div>`
+          }
+        </div>
+        ${
+          hasSelectedVideo
+            ? `
+              <div class="facetime-archive-player">
+                <video class="facetime-video facetime-archive-video" controls autoplay playsinline preload="auto" data-facetime-archive-video data-facetime-archive-owner="${escapeAttribute(owner?.id || "")}" data-facetime-archive-video-id="${escapeAttribute(selectedVideoId)}"></video>
+                <p class="facetime-meta">${escapeHtml(selectedVideo.name)}${selectedVideo.size ? ` - ${formatFileSize(selectedVideo.size)}` : ""}${selectedVideo.uploadedAt ? ` - ${formatMessageTime(selectedVideo.uploadedAt)}` : ""}</p>
+                <a class="facetime-download-link" data-facetime-archive-download download="${escapeAttribute(selectedVideo.name)}">Download video</a>
+              </div>
+            `
+            : ""
+        }
+      </div>
     </section>
   `;
 }
@@ -1860,6 +2098,7 @@ function bindEvents() {
   bindSeedWindowEvents();
   bindMonkeyVideoEvents();
   bindFacetimeEvents();
+  bindFacetimeArchiveEvents();
 
   document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
     toggleWallpaperMode();
@@ -1962,6 +2201,7 @@ function bindFacetimeEvents() {
   });
 
   document.querySelector("[data-close-facetime]")?.addEventListener("click", () => {
+    if (state.facetimeRecordingActive) cancelFacetimeRecording();
     state.facetimeWindowOpen = false;
     state.facetimeUploadStatus = "";
     state.facetimePlaybackStatus = "";
@@ -1980,7 +2220,61 @@ function bindFacetimeEvents() {
     });
   });
 
+  document.querySelector("[data-open-facetime-archive]")?.addEventListener("click", () => {
+    const owner = getVisibleFacetimeOwner() || getUser() || USERS[0];
+    state.facetimeArchiveOpen = true;
+    state.facetimeArchiveOwnerId = owner.id;
+    state.facetimeArchiveStatus = "";
+    render();
+    loadFacetimeArchive(owner.id, { renderAfter: true });
+  });
+
+  document.querySelector("[data-start-facetime-recording]")?.addEventListener("click", () => {
+    startFacetimeRecording();
+  });
+
+  document.querySelector("[data-stop-facetime-recording]")?.addEventListener("click", () => {
+    stopFacetimeRecording();
+  });
+
+  updateFacetimeRecordingControls();
   attachFacetimeVideo();
+}
+
+function bindFacetimeArchiveEvents() {
+  if (!state.facetimeArchiveOpen) return;
+
+  document.querySelector("[data-close-facetime-archive]")?.addEventListener("click", () => {
+    state.facetimeArchiveOpen = false;
+    state.facetimeArchiveVideoId = "";
+    state.facetimeArchiveStatus = "";
+    render();
+  });
+
+  document.querySelectorAll("[data-facetime-archive-owner]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.facetimeArchiveOwnerId = button.dataset.facetimeArchiveOwner || USERS[0].id;
+      state.facetimeArchiveVideoId = "";
+      state.facetimeArchiveStatus = "";
+      render();
+      loadFacetimeArchive(state.facetimeArchiveOwnerId, { renderAfter: true });
+    });
+  });
+
+  document.querySelectorAll("[data-play-facetime-archive-video]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const owner = getFacetimeArchiveOwner();
+      const videoId = button.dataset.playFacetimeArchiveVideo || "";
+      if (!owner || !videoId) return;
+
+      state.facetimeArchiveVideoId = videoId;
+      state.facetimeArchiveStatus = "";
+      render();
+      loadFacetimeArchiveVideo(owner.id, videoId, { renderAfter: true });
+    });
+  });
+
+  attachFacetimeArchiveVideo();
 }
 
 function attachFacetimeVideo() {
@@ -2017,7 +2311,7 @@ function attachFacetimeVideo() {
 
   videoElement.onerror = () => {
     videoElement.dataset.facetimeLoading = "";
-    retryFacetimeVideoSource(videoElement, video);
+    retryFacetimeVideoSource(videoElement, video, setFacetimePlaybackStatus);
   };
 
   if (videoElement.dataset.facetimeSourceId !== videoId || videoElement.src !== url) {
@@ -2030,7 +2324,7 @@ function attachFacetimeVideo() {
     setFacetimePlaybackStatus("Loading video...");
   }
 
-  playFacetimeVideo(videoElement);
+  playFacetimeVideo(videoElement, setFacetimePlaybackStatus);
 
   if (downloadLink) {
     downloadLink.href = video.data;
@@ -2038,58 +2332,117 @@ function attachFacetimeVideo() {
   }
 }
 
-function playFacetimeVideo(videoElement) {
+function attachFacetimeArchiveVideo() {
+  const videoElement = document.querySelector("[data-facetime-archive-video]");
+  const downloadLink = document.querySelector("[data-facetime-archive-download]");
+  const video = getSelectedFacetimeArchiveVideo();
+  if (!videoElement || !hasFacetimeVideo(video)) return;
+
+  const url = getFacetimeVideoObjectUrl(video, "archive");
+  const videoId = getFacetimeVideoId(video);
+
+  videoElement.onloadedmetadata = () => {
+    videoElement.dataset.facetimeLoading = "";
+    setFacetimeArchiveStatus("Video ready.");
+  };
+
+  videoElement.oncanplay = () => {
+    videoElement.dataset.facetimeLoading = "";
+    playFacetimeVideo(videoElement, setFacetimeArchiveStatus);
+  };
+
+  videoElement.onplay = () => {
+    videoElement.dataset.facetimeUserPaused = "";
+  };
+
+  videoElement.onpause = () => {
+    if (videoElement.dataset.facetimeLoading === "true") return;
+    if (!videoElement.ended) videoElement.dataset.facetimeUserPaused = "true";
+  };
+
+  videoElement.onwaiting = () => {
+    setFacetimeArchiveStatus("Loading video...");
+  };
+
+  videoElement.onerror = () => {
+    videoElement.dataset.facetimeLoading = "";
+    retryFacetimeVideoSource(videoElement, video, setFacetimeArchiveStatus);
+  };
+
+  if (videoElement.dataset.facetimeSourceId !== videoId || videoElement.src !== url) {
+    videoElement.dataset.facetimeSourceId = videoId;
+    videoElement.dataset.facetimeFallbackTried = "";
+    videoElement.dataset.facetimeUserPaused = "";
+    videoElement.dataset.facetimeLoading = "true";
+    videoElement.src = url;
+    videoElement.load();
+    setFacetimeArchiveStatus("Loading video...");
+  }
+
+  playFacetimeVideo(videoElement, setFacetimeArchiveStatus);
+
+  if (downloadLink) {
+    downloadLink.href = video.data;
+    downloadLink.download = video.name || "archived-video";
+  }
+}
+
+function playFacetimeVideo(videoElement, setStatus = setFacetimePlaybackStatus) {
   if (!videoElement || videoElement.dataset.facetimeUserPaused === "true") return;
 
   videoElement.muted = false;
   videoElement.play().then(() => {
-    setFacetimePlaybackStatus("Playing.");
+    setStatus("Playing.");
   }).catch(() => {
     videoElement.muted = true;
     videoElement.play().then(() => {
-      setFacetimePlaybackStatus("Playing muted.");
+      setStatus("Playing muted.");
     }).catch(() => {
-      setFacetimePlaybackStatus("Press play to start this video.");
+      setStatus("Press play to start this video.");
     });
   });
 }
 
-function retryFacetimeVideoSource(videoElement, video) {
+function retryFacetimeVideoSource(videoElement, video, setStatus = setFacetimePlaybackStatus) {
   if (videoElement.dataset.facetimeFallbackTried !== "true" && video.data && videoElement.src !== video.data) {
     videoElement.dataset.facetimeFallbackTried = "true";
     videoElement.dataset.facetimeUserPaused = "";
     videoElement.dataset.facetimeLoading = "true";
     videoElement.src = video.data;
     videoElement.load();
-    setFacetimePlaybackStatus("Retrying video...");
-    playFacetimeVideo(videoElement);
+    setStatus("Retrying video...");
+    playFacetimeVideo(videoElement, setStatus);
     return;
   }
 
-  setFacetimePlaybackStatus("This video could not play here. MP4/H.264 works best.");
+  setStatus("This video could not play here. MP4/H.264 works best.");
 }
 
 function getFacetimeSharedVideoUrl(video) {
-  const videoKey = getFacetimeVideoId(video);
+  return getFacetimeVideoObjectUrl(video, "current");
+}
 
-  if (facetimeSharedVideoUrl && facetimeSharedVideoKey === videoKey && facetimeSharedVideoData === video.data) {
-    return facetimeSharedVideoUrl;
+function getFacetimeVideoObjectUrl(video, namespace = "current") {
+  const videoKey = `${getFacetimeVideoId(video)}:${video.data?.length || 0}:${String(video.data || "").slice(-48)}`;
+  const cached = facetimeVideoUrlCache[namespace];
+
+  if (cached?.key === videoKey && cached.url) {
+    return cached.url;
   }
 
-  if (facetimeSharedVideoUrl?.startsWith("blob:")) {
-    URL.revokeObjectURL(facetimeSharedVideoUrl);
+  if (cached?.url?.startsWith("blob:")) {
+    URL.revokeObjectURL(cached.url);
   }
 
-  facetimeSharedVideoKey = videoKey;
-  facetimeSharedVideoData = video.data;
-
+  let url = video.data;
   try {
-    facetimeSharedVideoUrl = URL.createObjectURL(dataUrlToBlob(video.data, video.type));
+    url = URL.createObjectURL(dataUrlToBlob(video.data, video.type));
   } catch {
-    facetimeSharedVideoUrl = video.data;
+    url = video.data;
   }
 
-  return facetimeSharedVideoUrl;
+  facetimeVideoUrlCache[namespace] = { key: videoKey, url };
+  return url;
 }
 
 function dataUrlToBlob(dataUrl, fallbackType = "video/mp4") {
@@ -2113,7 +2466,181 @@ function setFacetimePlaybackStatus(message) {
   if (status) status.textContent = message;
 }
 
-function setFacetimeVideoFromFile(file) {
+function setFacetimeArchiveStatus(message) {
+  state.facetimeArchiveStatus = message;
+  const status = document.querySelector("[data-facetime-archive-status]");
+  if (status) status.textContent = message;
+}
+
+function canUseBrowserRecorder() {
+  return Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+}
+
+function updateFacetimeRecordingControls() {
+  const canRecord = canUseBrowserRecorder();
+
+  document.querySelectorAll("[data-start-facetime-recording]").forEach((button) => {
+    button.disabled = state.facetimeRecordingActive || !canRecord;
+  });
+
+  document.querySelectorAll("[data-stop-facetime-recording]").forEach((button) => {
+    button.disabled = !state.facetimeRecordingActive;
+  });
+
+  document.querySelectorAll("[data-facetime-recording-status]").forEach((element) => {
+    element.textContent = state.facetimeRecordingStatus;
+  });
+}
+
+async function startFacetimeRecording() {
+  if (state.facetimeRecordingActive || !getUser()) return;
+
+  if (!canUseBrowserRecorder()) {
+    state.facetimeRecordingStatus = "Recording is not available in this browser.";
+    updateFacetimeRecordingControls();
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 24, max: 30 },
+      },
+      audio: true,
+    });
+    const mimeType = getSupportedRecorderMimeType();
+    const recorderOptions = {
+      videoBitsPerSecond: 1200000,
+      audioBitsPerSecond: 64000,
+    };
+    if (mimeType) recorderOptions.mimeType = mimeType;
+
+    const recorder = new MediaRecorder(stream, recorderOptions);
+    facetimeRecordingStream = stream;
+    facetimeRecorder = recorder;
+    facetimeRecordingChunks = [];
+    facetimeRecordingDiscard = false;
+
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) facetimeRecordingChunks.push(event.data);
+    });
+
+    recorder.addEventListener("stop", async () => {
+      const chunks = facetimeRecordingChunks;
+      const discard = facetimeRecordingDiscard;
+      const type = normalizeVideoMimeType(recorder.mimeType || mimeType || "video/webm", "");
+      cleanupFacetimeRecording();
+
+      if (discard) return;
+
+      const blob = new Blob(chunks, { type });
+      if (!blob.size) {
+        state.facetimeRecordingStatus = "Recording was empty.";
+        updateFacetimeRecordingControls();
+        return;
+      }
+
+      if (blob.size > FACETIME_VIDEO_MAX_BYTES) {
+        state.facetimeRecordingStatus = `Recording is ${formatFileSize(blob.size)}.`;
+        state.facetimeUploadStatus = `That video is ${formatFileSize(blob.size)}. Please use ${formatFileSize(FACETIME_VIDEO_MAX_BYTES)} or less.`;
+        render();
+        return;
+      }
+
+      state.facetimeRecordingStatus = "Preparing recording...";
+      updateFacetimeRecordingControls();
+
+      try {
+        const data = await readBlobAsDataUrl(blob);
+        await saveFacetimeVideoData({
+          data,
+          name: getRecordingFileName(type),
+          type,
+          size: blob.size,
+        });
+        state.facetimeRecordingStatus = "";
+        updateFacetimeRecordingControls();
+      } catch {
+        state.facetimeRecordingStatus = "Recording could not be saved.";
+        updateFacetimeRecordingControls();
+      }
+    });
+
+    recorder.start(1000);
+    state.facetimeWindowOpen = true;
+    state.facetimeMode = "mine";
+    state.facetimeUploadStatus = "";
+    state.facetimePlaybackStatus = "";
+    state.facetimeRecordingActive = true;
+    state.facetimeRecordingStatus = "Recording...";
+    updateFacetimeRecordingControls();
+
+    window.clearTimeout(facetimeRecordingTimer);
+    facetimeRecordingTimer = window.setTimeout(() => {
+      stopFacetimeRecording();
+    }, FACETIME_RECORDING_MAX_MS);
+  } catch {
+    cleanupFacetimeRecording();
+    state.facetimeRecordingStatus = "Camera was not available.";
+    updateFacetimeRecordingControls();
+  }
+}
+
+function stopFacetimeRecording() {
+  if (!facetimeRecorder || facetimeRecorder.state === "inactive") {
+    cleanupFacetimeRecording();
+    return;
+  }
+
+  state.facetimeRecordingStatus = "Finishing recording...";
+  updateFacetimeRecordingControls();
+  facetimeRecorder.stop();
+}
+
+function cancelFacetimeRecording() {
+  facetimeRecordingDiscard = true;
+  stopFacetimeRecording();
+}
+
+function cleanupFacetimeRecording() {
+  window.clearTimeout(facetimeRecordingTimer);
+  facetimeRecordingTimer = null;
+
+  facetimeRecordingStream?.getTracks?.().forEach((track) => {
+    track.stop();
+  });
+
+  facetimeRecorder = null;
+  facetimeRecordingStream = null;
+  facetimeRecordingChunks = [];
+  facetimeRecordingDiscard = false;
+  state.facetimeRecordingActive = false;
+  updateFacetimeRecordingControls();
+}
+
+function getSupportedRecorderMimeType() {
+  if (!window.MediaRecorder?.isTypeSupported) return "";
+
+  return (
+    [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+      "video/mp4;codecs=h264,aac",
+      "video/mp4",
+    ].find((type) => MediaRecorder.isTypeSupported(type)) || ""
+  );
+}
+
+function getRecordingFileName(type) {
+  const extension = normalizeVideoMimeType(type, "").includes("mp4") ? "mp4" : "webm";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `FaceTime recording ${stamp}.${extension}`;
+}
+
+async function setFacetimeVideoFromFile(file) {
   state.facetimeWindowOpen = true;
   state.facetimeMode = "mine";
   state.facetimePlaybackStatus = "";
@@ -2130,50 +2657,70 @@ function setFacetimeVideoFromFile(file) {
     return;
   }
 
-  const reader = new FileReader();
   state.facetimeUploadStatus = "Preparing video...";
   render();
 
-  reader.addEventListener("load", async () => {
-    const user = getUser();
-    if (!user) return;
-
+  try {
     const type = getVideoMimeType(file);
-    const data = normalizeVideoDataUrl(String(reader.result || ""), type);
-    if (!data.startsWith("data:video/")) {
-      state.facetimeUploadStatus = "That video could not be prepared.";
-      render();
-      return;
-    }
-
-    const uploadedAt = new Date().toISOString();
-    state.data.facetimeVideos ||= {};
-    state.data.facetimeVideos[user.id] = {
-      data,
+    await saveFacetimeVideoData({
+      data: await readBlobAsDataUrl(file),
       name: file.name || "Shared video",
       type,
       size: file.size,
-      uploadedBy: user.name,
-      uploadedUserId: user.id,
-      uploadedAt,
-      videoId: createMessageId(user.id),
-    };
-    state.facetimeUploadStatus = "Saving video...";
-    saveLocalData();
-    render();
-
-    await saveRemoteData({ includeFacetimeVideos: true, facetimeUserId: user.id });
-    state.facetimeUploadStatus = state.remoteReady ? "Video saved." : "Video saved here; sync will retry.";
-    if (!state.remoteReady) scheduleRemoteSave({ includeFacetimeVideos: true, facetimeUserId: user.id });
-    render();
-  });
-
-  reader.addEventListener("error", () => {
+    });
+  } catch {
     state.facetimeUploadStatus = "That video could not be read.";
     render();
-  });
+  }
+}
 
-  reader.readAsDataURL(file);
+async function saveFacetimeVideoData({ data, name, type, size }) {
+  const user = getUser();
+  if (!user) return;
+
+  const videoType = normalizeVideoMimeType(type, name);
+  const normalizedData = normalizeVideoDataUrl(data, videoType);
+  if (!normalizedData.startsWith("data:video/")) {
+    state.facetimeUploadStatus = "That video could not be prepared.";
+    render();
+    return;
+  }
+
+  const uploadedAt = new Date().toISOString();
+  state.facetimeWindowOpen = true;
+  state.facetimeMode = "mine";
+  state.facetimePlaybackStatus = "";
+  state.data.facetimeVideos ||= {};
+  state.data.facetimeVideos[user.id] = {
+    data: normalizedData,
+    name: name || "Shared video",
+    type: videoType,
+    size,
+    uploadedBy: user.name,
+    uploadedUserId: user.id,
+    uploadedAt,
+    videoId: createMessageId(user.id),
+  };
+  state.facetimeUploadStatus = "Saving video...";
+  saveLocalData();
+  render();
+
+  await saveRemoteData({ includeFacetimeVideos: true, facetimeUserId: user.id });
+  state.facetimeUploadStatus = state.remoteReady ? "Video saved." : "Video saved here; sync will retry.";
+  if (!state.remoteReady) scheduleRemoteSave({ includeFacetimeVideos: true, facetimeUserId: user.id });
+  if (state.facetimeArchiveOpen && state.facetimeArchiveOwnerId === user.id) {
+    await loadFacetimeArchive(user.id, { force: true, renderAfter: false });
+  }
+  render();
+}
+
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("File could not be read.")));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function getFirstVideoFile(files) {
@@ -2205,7 +2752,7 @@ function canBrowserPlayVideoType(type) {
 }
 
 function normalizeVideoMimeType(type, name = "") {
-  const cleanType = normalizeShortText(type, "", 48).toLowerCase();
+  const cleanType = normalizeShortText(type, "", 64).toLowerCase().split(";")[0].trim();
   if (/\.webm$/i.test(name)) return "video/webm";
   if (/\.ogv$/i.test(name)) return "video/ogg";
   if (/\.(mp4|m4v|mov)$/i.test(name)) return "video/mp4";
