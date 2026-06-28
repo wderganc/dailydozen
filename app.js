@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-27 10:44:04 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-28 10:58:15 AM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -82,6 +82,16 @@ const CLAUDIA_SEEDS = [
   { name: "Nasturtium", tag: "edible", tone: "yellow" },
   { name: "Lavender", tag: "perennial", tone: "purple" },
   { name: "Sunflower", tag: "tall", tone: "gold" },
+];
+const COLORED_PENCILS = [
+  { name: "Carmine", color: "#c8282f" },
+  { name: "Marigold", color: "#f0a72d" },
+  { name: "Canary", color: "#f5d94c" },
+  { name: "Clover", color: "#2e8d57" },
+  { name: "Sky", color: "#4a8bd8" },
+  { name: "Violet", color: "#7650a8" },
+  { name: "Umber", color: "#8a5b33" },
+  { name: "Slate", color: "#60646f" },
 ];
 
 const app = document.querySelector("#app");
@@ -117,7 +127,11 @@ const state = {
   monkeyWindowOpen: false,
   ukuleleWindowOpen: false,
   ukuleleVideoIndex: 0,
-  seedWindow: "",
+  seedWindows: {
+    claudia: false,
+    genevieve: false,
+  },
+  coloredPencilsWindowOpen: false,
   pictureWindowId: "",
   facetimeWindowOpen: false,
   facetimeArchiveOpen: false,
@@ -1536,10 +1550,10 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
             <span class="icon-ukulele"></span>
             <strong>ULaylee</strong>
           </button>
-          <div class="desktop-icon" data-desktop-icon="colored-pencils" style="${getDesktopIconStyle("colored-pencils")}">
+          <button class="desktop-icon" type="button" data-desktop-icon="colored-pencils" data-open-colored-pencils aria-label="Open Colored Pencils" style="${getDesktopIconStyle("colored-pencils")}">
             <span class="icon-pencils"></span>
             <strong>Colored Pencils</strong>
-          </div>
+          </button>
           <button class="desktop-icon" type="button" data-desktop-icon="genevieves-seed-collection" data-open-seed-window="genevieve" aria-label="Open Genevieve's Seed Collection" style="${getDesktopIconStyle("genevieves-seed-collection")}">
             <span class="icon-folder icon-folder-green"></span>
             <strong>Genevieve's Seed Collection</strong>
@@ -1555,7 +1569,9 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
         ${state.kimchiQuestOpen ? renderKimchiQuestWindow() : ""}
         ${state.monkeyWindowOpen ? renderMediaWindowSlot("monkey-see-genevieve-do", preservedMediaIds, renderMonkeyWindow()) : ""}
         ${state.ukuleleWindowOpen ? renderMediaWindowSlot("ulaylee", preservedMediaIds, renderUkuleleWindow()) : ""}
-        ${state.seedWindow ? renderSeedWindow(state.seedWindow) : ""}
+        ${state.seedWindows.claudia ? renderSeedWindow("claudia") : ""}
+        ${state.seedWindows.genevieve ? renderSeedWindow("genevieve") : ""}
+        ${state.coloredPencilsWindowOpen ? renderColoredPencilsWindow() : ""}
         ${state.pictureWindowId ? renderDesktopPictureWindow(state.pictureWindowId) : ""}
         ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
         ${state.facetimeArchiveOpen ? renderMediaWindowSlot("facetime-archive", preservedMediaIds, renderFacetimeArchiveWindow()) : ""}
@@ -2014,13 +2030,14 @@ function renderSeedWindow(owner) {
   const isClaudia = owner === "claudia";
   const title = isClaudia ? "Claudia's Seed Collection" : "Genevieve's Seed Collection";
   const windowId = isClaudia ? "claudia-seeds" : "genevieve-seeds";
+  const titleId = `${windowId}-title`;
 
   return `
-    <section class="seed-window ${isClaudia ? "seed-window-claudia" : "seed-window-genevieve"} mac-window" data-window-title="${escapeAttribute(title)}" data-draggable-window="${windowId}" style="${getWindowStyle(windowId)}" role="dialog" aria-labelledby="seed-window-title">
-      <button class="window-close" type="button" data-close-seed-window aria-label="Close ${escapeAttribute(title)}" title="Close">×</button>
+    <section class="seed-window ${isClaudia ? "seed-window-claudia" : "seed-window-genevieve"} mac-window" data-window-title="${escapeAttribute(title)}" data-seed-owner="${owner}" data-draggable-window="${windowId}" style="${getWindowStyle(windowId)}" role="dialog" aria-labelledby="${titleId}">
+      <button class="window-close" type="button" data-close-seed-window="${owner}" aria-label="Close ${escapeAttribute(title)}" title="Close">×</button>
       <div class="seed-window-header">
         <p class="eyebrow">${isClaudia ? "cataloged packets" : "field notes"}</p>
-        <h2 id="seed-window-title">${escapeHtml(title)}</h2>
+        <h2 id="${titleId}">${escapeHtml(title)}</h2>
       </div>
       ${isClaudia ? renderClaudiaSeeds() : renderGenevieveSeeds()}
     </section>
@@ -2057,6 +2074,33 @@ function renderGenevieveSeeds() {
       <span class="hair-tie hair-tie-2"></span>
       <span class="smiley-note" aria-hidden="true">:)</span>
     </div>
+  `;
+}
+
+function renderColoredPencilsWindow() {
+  return `
+    <section class="colored-pencils-window mac-window" data-window-title="Colored Pencils" data-draggable-window="colored-pencils" style="${getWindowStyle("colored-pencils")}" role="dialog" aria-labelledby="colored-pencils-title">
+      <button class="window-close" type="button" data-close-colored-pencils aria-label="Close Colored Pencils" title="Close">×</button>
+      <div class="colored-pencils-header">
+        <p class="eyebrow">fresh points</p>
+        <h2 id="colored-pencils-title">Colored Pencils</h2>
+      </div>
+      <div class="pencil-pack" aria-label="A pack of colored pencils">
+        <div class="pencil-pack-lid">
+          <span>DAILY DOZEN</span>
+          <strong>8 color pencils</strong>
+        </div>
+        <div class="pencil-row">
+          ${COLORED_PENCILS.map(
+            (pencil, index) => `
+              <span class="colored-pencil colored-pencil-${index + 1}" style="--pencil-color: ${pencil.color};" title="${escapeAttribute(pencil.name)}">
+                <span></span>
+              </span>
+            `,
+          ).join("")}
+        </div>
+      </div>
+    </section>
   `;
 }
 
@@ -2123,6 +2167,7 @@ function bindEvents() {
   bindKimchiQuestEvents();
   bindUkuleleEvents();
   bindSeedWindowEvents();
+  bindColoredPencilsEvents();
   bindMonkeyVideoEvents();
   bindFacetimeEvents();
   bindFacetimeArchiveEvents();
@@ -2865,8 +2910,9 @@ function bindSeedWindowEvents() {
         return;
       }
 
-      state.seedWindow = icon.dataset.openSeedWindow;
-      mountSeedWindow();
+      const owner = getSeedOwner(icon.dataset.openSeedWindow);
+      state.seedWindows[owner] = true;
+      mountSeedWindow(owner);
     });
   });
 
@@ -2874,15 +2920,55 @@ function bindSeedWindowEvents() {
 }
 
 function bindSeedWindowControls() {
-  document.querySelector("[data-close-seed-window]")?.addEventListener("click", () => {
-    state.seedWindow = "";
-    removeDesktopWindow(".seed-window");
+  document.querySelectorAll("[data-close-seed-window]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const owner = getSeedOwner(button.dataset.closeSeedWindow);
+      state.seedWindows[owner] = false;
+      removeDesktopWindow(getSeedWindowSelector(owner));
+    });
   });
 }
 
-function mountSeedWindow() {
-  if (!state.seedWindow) return;
-  mountDesktopWindow(".seed-window", renderSeedWindow(state.seedWindow), bindSeedWindowControls);
+function mountSeedWindow(owner) {
+  const seedOwner = getSeedOwner(owner);
+  if (!state.seedWindows[seedOwner]) return;
+  mountDesktopWindow(getSeedWindowSelector(seedOwner), renderSeedWindow(seedOwner), bindSeedWindowControls);
+}
+
+function getSeedOwner(owner) {
+  return owner === "genevieve" ? "genevieve" : "claudia";
+}
+
+function getSeedWindowSelector(owner) {
+  return `[data-draggable-window="${getSeedOwner(owner) === "genevieve" ? "genevieve-seeds" : "claudia-seeds"}"]`;
+}
+
+function bindColoredPencilsEvents() {
+  const icon = document.querySelector("[data-open-colored-pencils]");
+
+  icon?.addEventListener("click", () => {
+    if (icon.dataset.dragMoved === "true") {
+      icon.dataset.dragMoved = "";
+      return;
+    }
+
+    state.coloredPencilsWindowOpen = true;
+    mountColoredPencilsWindow();
+  });
+
+  bindColoredPencilsWindowEvents();
+}
+
+function bindColoredPencilsWindowEvents() {
+  document.querySelector("[data-close-colored-pencils]")?.addEventListener("click", () => {
+    state.coloredPencilsWindowOpen = false;
+    removeDesktopWindow('[data-draggable-window="colored-pencils"]');
+  });
+}
+
+function mountColoredPencilsWindow() {
+  if (!state.coloredPencilsWindowOpen) return;
+  mountDesktopWindow('[data-draggable-window="colored-pencils"]', renderColoredPencilsWindow(), bindColoredPencilsWindowEvents);
 }
 
 function bindUkuleleEvents() {
