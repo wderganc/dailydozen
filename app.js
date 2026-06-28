@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-27 07:39:42 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-27 09:51:37 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -2504,16 +2504,16 @@ async function startFacetimeRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 640 },
-        height: { ideal: 480 },
+        width: { ideal: 480 },
+        height: { ideal: 360 },
         frameRate: { ideal: 24, max: 30 },
       },
       audio: true,
     });
     const mimeType = getSupportedRecorderMimeType();
     const recorderOptions = {
-      videoBitsPerSecond: 1200000,
-      audioBitsPerSecond: 64000,
+      videoBitsPerSecond: 700000,
+      audioBitsPerSecond: 128000,
     };
     if (mimeType) recorderOptions.mimeType = mimeType;
 
