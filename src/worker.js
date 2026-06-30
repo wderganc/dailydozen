@@ -30,6 +30,7 @@ const JSON_HEADERS = {
 const DEFAULT_WALLPAPER_MODE = "tile";
 const DESKTOP_PICTURE_LIMIT = 12;
 const DESKTOP_VIDEO_LIMIT = 12;
+const SHARED_NOTE_ARCHIVE_LIMIT = 24;
 const USER_IDS = ["you", "wife"];
 const USER_NAMES = {
   you: "Scotty P.",
@@ -168,6 +169,7 @@ function normalizeData(data) {
     notes: normalizeObject(data?.notes),
     sharedNotes: normalizeObject(data?.sharedNotes),
     sharedNoteMeta: normalizeObject(data?.sharedNoteMeta),
+    sharedNoteArchives: normalizeSharedNoteArchives(data?.sharedNoteArchives),
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
@@ -209,6 +211,7 @@ function mergeStoredData(
     notes: mergeNestedObjects(storedData.notes, incomingData.notes),
     sharedNotes: shared.notes,
     sharedNoteMeta: shared.meta,
+    sharedNoteArchives: mergeSharedNoteArchives(storedData.sharedNoteArchives, incomingData.sharedNoteArchives),
     wallpaper: incomingData.wallpaper || storedData.wallpaper || "",
     wallpaperMode: incomingData.wallpaperMode || storedData.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(storedData.iconPositions, incomingData.iconPositions),
@@ -495,6 +498,55 @@ function mergeDesktopPictures(storedPictures, incomingPictures) {
   });
 
   return [...picturesById.values()].slice(-DESKTOP_PICTURE_LIMIT);
+}
+
+function normalizeSharedNoteArchives(value) {
+  if (!Array.isArray(value)) return [];
+
+  const archivesById = new Map();
+  value.map(normalizeSharedNoteArchive).forEach((archive) => {
+    if (!archive.id || !archive.image) return;
+    archivesById.set(archive.id, archive);
+  });
+
+  return [...archivesById.values()]
+    .sort((a, b) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""))
+    .slice(-SHARED_NOTE_ARCHIVE_LIMIT);
+}
+
+function normalizeSharedNoteArchive(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const image = typeof value.image === "string" && value.image.startsWith("data:image/png") ? value.image : "";
+  if (!image) return {};
+
+  const createdAt = normalizeShortText(value.createdAt, "", 48);
+  const id = normalizeShortText(value.id, "", 96) || createdAt || `${image.length}-${image.slice(-36)}`;
+
+  return {
+    id,
+    image,
+    note: normalizeShortText(value.note, "", 420),
+    dateKey: normalizeShortText(value.dateKey, "", 16),
+    createdBy: normalizeShortText(value.createdBy, "Daily Dozen", 80),
+    createdAt,
+  };
+}
+
+function mergeSharedNoteArchives(storedArchives, incomingArchives) {
+  const archivesById = new Map();
+
+  normalizeSharedNoteArchives(storedArchives).forEach((archive) => {
+    archivesById.set(archive.id, archive);
+  });
+
+  normalizeSharedNoteArchives(incomingArchives).forEach((archive) => {
+    archivesById.set(archive.id, archive);
+  });
+
+  return [...archivesById.values()]
+    .sort((a, b) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""))
+    .slice(-SHARED_NOTE_ARCHIVE_LIMIT);
 }
 
 function normalizeDesktopVideos(value) {

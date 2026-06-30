@@ -120,6 +120,66 @@ h2 {
   white-space: nowrap;
 }
 
+.menu-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: inherit;
+}
+
+.menu-button:hover,
+.menu-button:focus,
+.menu-button[aria-expanded="true"] {
+  color: #ffffff;
+  background: #000000;
+  outline: 0;
+}
+
+.special-menu-card {
+  position: absolute;
+  top: 21px;
+  left: 162px;
+  z-index: 90;
+  width: 192px;
+  padding: 4px 0;
+  border: 2px solid #000000;
+  background: var(--chrome);
+  box-shadow: 2px 2px 0 var(--shadow);
+}
+
+.special-menu-card button {
+  display: block;
+  width: 100%;
+  min-height: 18px;
+  margin: 0;
+  padding: 2px 10px 2px 21px;
+  border: 0;
+  color: #000000;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.special-menu-card button::before {
+  display: inline-block;
+  width: 10px;
+  margin-left: -15px;
+  color: #1f3bb6;
+  content: "◆";
+  font-size: 8px;
+}
+
+.special-menu-card button:hover,
+.special-menu-card button:focus {
+  color: #ffffff;
+  background: #000000;
+  outline: 0;
+}
+
 .menu-help {
   position: relative;
 }
@@ -1975,6 +2035,103 @@ button:focus {
 
 .facetime-archive-player {
   min-width: 0;
+}
+
+.shared-note-archive-window {
+  position: absolute;
+  top: max(54px, 9vh);
+  left: clamp(12px, 18vw, 230px);
+  z-index: 24;
+  width: min(620px, calc(100% - 28px));
+  padding: 28px 10px 10px;
+  transform: translate(var(--window-x, 0), var(--window-y, 0));
+}
+
+.shared-note-archive-window::after {
+  display: none;
+}
+
+.shared-note-archive-head {
+  display: flex;
+  gap: 9px;
+  align-items: start;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.shared-note-archive-head p:last-child {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.archive-note-button {
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 2px solid #000000;
+  color: #000000;
+  background: #eeeeee;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #8d8d8d;
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.archive-note-button:hover,
+.archive-note-button:focus {
+  color: #ffffff;
+  background: #000000;
+  outline: 0;
+}
+
+.shared-note-archive-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: min(520px, calc(100vh - 168px));
+  overflow: auto;
+  padding: 6px;
+  border: 2px solid #000000;
+  background: #ffffff;
+  box-shadow: inset 2px 2px 0 #9a9a9a;
+}
+
+.shared-note-archive-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid #000000;
+  background: #eeeeee;
+}
+
+.shared-note-archive-item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 14 / 9;
+  border: 2px solid #000000;
+  background: #d8d8d8;
+  object-fit: contain;
+}
+
+.shared-note-archive-item strong,
+.shared-note-archive-item span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-note-archive-item span,
+.shared-note-archive-empty {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.shared-note-archive-empty {
+  padding: 8px;
+  font-weight: 700;
 }
 
 .picture-window {

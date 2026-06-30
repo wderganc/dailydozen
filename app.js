@@ -52,7 +52,7 @@ const ICON_POSITIONS_KEY = "daily-dozen-icon-positions-v1";
 const MESSAGE_READS_KEY = "daily-dozen-message-reads-v1";
 const FACETIME_VIDEO_READS_KEY = "daily-dozen-facetime-video-reads-v1";
 const API_STATE_URL = "/api/state";
-const APP_BUILD_LABEL = "Build: 2026-06-28 05:51:18 PM EDT";
+const APP_BUILD_LABEL = "Build: 2026-06-29 11:09:01 PM EDT";
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 const REMOTE_SAVE_DEBOUNCE_MS = 1200;
 const WALLPAPER_MAX_SIDE = 1400;
@@ -61,6 +61,7 @@ const DESKTOP_PICTURE_MAX_SIDE = 900;
 const DESKTOP_PICTURE_JPEG_QUALITY = 0.76;
 const DESKTOP_PICTURE_LIMIT = 12;
 const DESKTOP_VIDEO_LIMIT = 12;
+const SHARED_NOTE_ARCHIVE_LIMIT = 24;
 const WINDOW_LAYER_BASE = 40;
 const DEFAULT_WALLPAPER_MODE = "tile";
 const KIMCHI_QUEST_MAX_BITES = 5;
@@ -141,6 +142,9 @@ const state = {
     url: "",
     status: "",
   },
+  specialMenuOpen: false,
+  sharedNoteArchiveOpen: false,
+  sharedNoteArchiveStatus: "",
   pictureWindowIds: [],
   desktopVideoWindowIds: [],
   facetimeWindowOpen: false,
@@ -249,6 +253,7 @@ function getDefaultData() {
     notes: {},
     sharedNotes: {},
     sharedNoteMeta: {},
+    sharedNoteArchives: [],
     wallpaper: "",
     wallpaperMode: DEFAULT_WALLPAPER_MODE,
     iconPositions: {},
@@ -272,6 +277,7 @@ function loadData() {
       notes: parsed.notes || {},
       sharedNotes: parsed.sharedNotes || {},
       sharedNoteMeta: parsed.sharedNoteMeta || {},
+      sharedNoteArchives: normalizeSharedNoteArchives(parsed.sharedNoteArchives),
       wallpaper: normalizeWallpaper(parsed.wallpaper),
       wallpaperMode: normalizeWallpaperMode(parsed.wallpaperMode),
       iconPositions: normalizeIconPositions(parsed.iconPositions || loadIconPositions()),
@@ -292,6 +298,7 @@ function normalizeData(data) {
     notes: data?.notes && typeof data.notes === "object" ? data.notes : {},
     sharedNotes: data?.sharedNotes && typeof data.sharedNotes === "object" ? data.sharedNotes : {},
     sharedNoteMeta: data?.sharedNoteMeta && typeof data.sharedNoteMeta === "object" ? data.sharedNoteMeta : {},
+    sharedNoteArchives: normalizeSharedNoteArchives(data?.sharedNoteArchives),
     wallpaper: normalizeWallpaper(data?.wallpaper),
     wallpaperMode: normalizeWallpaperMode(data?.wallpaperMode),
     iconPositions: normalizeIconPositions(data?.iconPositions),
@@ -390,6 +397,39 @@ function getDesktopVideoMetadataList(videos) {
   return normalizeDesktopVideos(videos)
     .map(getDesktopVideoMetadata)
     .filter(hasDesktopVideoRecord);
+}
+
+function normalizeSharedNoteArchives(value) {
+  if (!Array.isArray(value)) return [];
+
+  const archivesById = new Map();
+  value.map(normalizeSharedNoteArchive).forEach((archive) => {
+    if (!archive.id || !archive.image) return;
+    archivesById.set(archive.id, archive);
+  });
+
+  return [...archivesById.values()]
+    .sort((a, b) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""))
+    .slice(-SHARED_NOTE_ARCHIVE_LIMIT);
+}
+
+function normalizeSharedNoteArchive(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const image = typeof value.image === "string" && value.image.startsWith("data:image/png") ? value.image : "";
+  if (!image) return {};
+
+  const createdAt = normalizeShortText(value.createdAt, "", 48);
+  const id = normalizeShortText(value.id, "", 96) || createdAt || `${image.length}-${image.slice(-36)}`;
+
+  return {
+    id,
+    image,
+    note: normalizeShortText(value.note, "", 420),
+    dateKey: normalizeShortText(value.dateKey, "", 16),
+    createdBy: normalizeShortText(value.createdBy, "Daily Dozen", 80),
+    createdAt,
+  };
 }
 
 function normalizeDesktopLinks(value) {
@@ -570,6 +610,7 @@ function saveLocalData() {
         JSON.stringify({
           ...state.data,
           wallpaper: "",
+          sharedNoteArchives: [],
           desktopPictures: [],
           desktopVideos: getDesktopVideoMetadataList(state.data.desktopVideos),
           facetimeVideo: {},
@@ -756,6 +797,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
   updateSyncIndicator();
   const previousFacetimeVideoId = getVisibleFacetimeVideoId();
   const previousPartnerFacetimeVideoId = getFacetimeUnreadStatus().videoId;
+  const previousSharedNoteArchivesSignature = getSharedNoteArchivesSignature();
   const previousDesktopPicturesSignature = getDesktopPicturesSignature();
   const previousDesktopVideosSignature = getDesktopVideosSignature();
   const previousDesktopLinksSignature = getDesktopLinksSignature();
@@ -784,6 +826,7 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
 
     const facetimeVideoChanged = previousFacetimeVideoId !== getVisibleFacetimeVideoId();
     const partnerFacetimeVideoChanged = previousPartnerFacetimeVideoId !== getFacetimeUnreadStatus().videoId;
+    const sharedNoteArchivesChanged = previousSharedNoteArchivesSignature !== getSharedNoteArchivesSignature();
     const desktopPicturesChanged = previousDesktopPicturesSignature !== getDesktopPicturesSignature();
     const desktopVideosChanged = previousDesktopVideosSignature !== getDesktopVideosSignature();
     const desktopLinksChanged = previousDesktopLinksSignature !== getDesktopLinksSignature();
@@ -795,7 +838,8 @@ async function loadRemoteData({ mergeLocal = false, renderAfter = false, include
     if (
       renderAfter &&
       !isTextEditing() &&
-      (desktopPicturesChanged ||
+      (sharedNoteArchivesChanged ||
+        desktopPicturesChanged ||
         desktopVideosChanged ||
         desktopLinksChanged ||
         (!state.monkeyWindowOpen &&
@@ -844,6 +888,7 @@ function mergeData(remoteData, localData) {
     notes: mergeNestedObjects(local.notes, remote.notes),
     sharedNotes: shared.notes,
     sharedNoteMeta: shared.meta,
+    sharedNoteArchives: mergeSharedNoteArchives(remote.sharedNoteArchives, local.sharedNoteArchives),
     wallpaper: remote.wallpaper || local.wallpaper || "",
     wallpaperMode: remote.wallpaperMode || local.wallpaperMode || DEFAULT_WALLPAPER_MODE,
     iconPositions: mergeIconPositions(remote.iconPositions, local.iconPositions),
@@ -879,6 +924,22 @@ function mergeSharedNoteState(remote, local) {
   });
 
   return { notes, meta };
+}
+
+function mergeSharedNoteArchives(remoteArchives, localArchives) {
+  const archivesById = new Map();
+
+  normalizeSharedNoteArchives(remoteArchives).forEach((archive) => {
+    archivesById.set(archive.id, archive);
+  });
+
+  normalizeSharedNoteArchives(localArchives).forEach((archive) => {
+    archivesById.set(archive.id, archive);
+  });
+
+  return [...archivesById.values()]
+    .sort((a, b) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""))
+    .slice(-SHARED_NOTE_ARCHIVE_LIMIT);
 }
 
 function hasIconPositions(iconPositions) {
@@ -998,6 +1059,12 @@ function getDesktopLinksSignature() {
     .join("|");
 }
 
+function getSharedNoteArchivesSignature() {
+  return normalizeSharedNoteArchives(state.data.sharedNoteArchives)
+    .map((archive) => `${archive.id}:${archive.createdAt}:${archive.image.length}`)
+    .join("|");
+}
+
 function getDesktopVideosSignature() {
   return normalizeDesktopVideos(state.data.desktopVideos)
     .map((video) => `${getDesktopVideoId(video)}:${video.name}:${video.uploadedAt}:${video.size}`)
@@ -1090,6 +1157,7 @@ function hasLocalActivity(data) {
     Object.keys(data.notes || {}).length > 0 ||
     Object.keys(data.sharedNotes || {}).length > 0 ||
     Object.keys(data.sharedNoteMeta || {}).length > 0 ||
+    normalizeSharedNoteArchives(data.sharedNoteArchives).length > 0 ||
     hasIconPositions(data.iconPositions) ||
     hasDesktopPictures(data.desktopPictures) ||
     hasDesktopVideos(data.desktopVideos) ||
@@ -1531,6 +1599,122 @@ function setSharedNote(value) {
   }
 
   saveData();
+}
+
+async function archiveSharedNoteScreenshot() {
+  const note = getSharedNote();
+  const user = getUser();
+
+  if (!note.trim()) {
+    state.sharedNoteArchiveOpen = true;
+    state.sharedNoteArchiveStatus = "Shared note is empty.";
+    state.specialMenuOpen = false;
+    render();
+    return;
+  }
+
+  try {
+    const createdAt = new Date().toISOString();
+    const archive = normalizeSharedNoteArchive({
+      id: createMessageId(user?.id || "shared-note"),
+      image: createSharedNoteScreenshot({
+        note,
+        dateKey: state.selectedDate,
+        createdAt,
+        createdBy: user?.name || "Daily Dozen",
+      }),
+      note,
+      dateKey: state.selectedDate,
+      createdBy: user?.name || "Daily Dozen",
+      createdAt,
+    });
+
+    state.data.sharedNoteArchives = mergeSharedNoteArchives(state.data.sharedNoteArchives, [archive]);
+    state.sharedNoteArchiveOpen = true;
+    state.sharedNoteArchiveStatus = "Archived shared note screenshot.";
+    state.specialMenuOpen = false;
+    saveLocalData();
+    render();
+
+    await saveRemoteData();
+    if (!state.remoteReady) scheduleRemoteSave();
+  } catch {
+    state.sharedNoteArchiveOpen = true;
+    state.sharedNoteArchiveStatus = "Could not archive shared note.";
+    state.specialMenuOpen = false;
+    render();
+  }
+}
+
+function createSharedNoteScreenshot({ note, dateKey, createdAt, createdBy }) {
+  const scale = 2;
+  const width = 560;
+  const height = 360;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+
+  const context = canvas.getContext("2d");
+  context.scale(scale, scale);
+  context.imageSmoothingEnabled = false;
+
+  context.fillStyle = "#d8d8d8";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "#000000";
+  context.lineWidth = 2;
+  context.strokeRect(1, 1, width - 2, height - 2);
+
+  context.fillStyle = "#f7f7f7";
+  context.fillRect(2, 2, width - 4, 22);
+  context.strokeRect(7, 7, 10, 10);
+  context.fillStyle = "#000000";
+  context.font = '700 13px Chicago, Charcoal, Geneva, "Lucida Grande", Arial, sans-serif';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("Shared Note", width / 2, 13);
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(28, 48, width - 56, 232);
+  context.strokeRect(28, 48, width - 56, 232);
+
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  context.fillStyle = "#000000";
+  context.font = '700 14px Chicago, Charcoal, Geneva, "Lucida Grande", Arial, sans-serif';
+  context.fillText(formatDate(dateKey), 40, 38);
+  context.font = '16px Chicago, Charcoal, Geneva, "Lucida Grande", Arial, sans-serif';
+  drawCanvasWrappedText(context, note, 44, 76, width - 88, 24, 8);
+
+  context.fillStyle = "#333333";
+  context.font = '12px Chicago, Charcoal, Geneva, "Lucida Grande", Arial, sans-serif';
+  context.fillText(`Archived ${formatMessageTime(createdAt)}`, 40, 314);
+  context.fillText(`Saved by ${createdBy}`, 40, 334);
+
+  return canvas.toDataURL("image/png");
+}
+
+function drawCanvasWrappedText(context, text, x, y, maxWidth, lineHeight, maxLines) {
+  const words = String(text || "").replace(/\s+/g, " ").trim().split(" ");
+  const lines = [];
+  let line = "";
+
+  words.forEach((word) => {
+    const testLine = line ? `${line} ${word}` : word;
+    if (context.measureText(testLine).width <= maxWidth) {
+      line = testLine;
+      return;
+    }
+
+    if (line) lines.push(line);
+    line = word;
+  });
+
+  if (line) lines.push(line);
+
+  lines.slice(0, maxLines).forEach((entry, index) => {
+    const textLine = index === maxLines - 1 && lines.length > maxLines ? `${entry.slice(0, Math.max(0, entry.length - 3))}...` : entry;
+    context.fillText(textLine, x, y + index * lineHeight);
+  });
 }
 
 function createMessageId(userId) {
@@ -2006,15 +2190,23 @@ function mountDesktopLinkIcon(link) {
 function renderMacShell(content, preservedMediaIds = new Set()) {
   return `
     <div class="mac-shell">
-      <header class="system-menu" aria-hidden="true">
+      <header class="system-menu">
         <div class="menu-mark">D12</div>
         <div class="menu-items">
           <span>File</span>
           <span>Edit</span>
           <span>View</span>
-          <span>Special</span>
+          <button class="menu-button" type="button" data-special-menu aria-expanded="${state.specialMenuOpen}">Special</button>
           <span class="menu-help" title="${escapeAttribute(APP_BUILD_LABEL)}" data-build-label="${escapeAttribute(APP_BUILD_LABEL)}">Help</span>
         </div>
+        ${
+          state.specialMenuOpen
+            ? `<div class="special-menu-card" data-special-menu-card>
+                <button type="button" data-archive-shared-note>Archive Shared Note</button>
+                <button type="button" data-open-shared-note-archive>Shared Note Archive</button>
+              </div>`
+            : ""
+        }
         <time>${formatClassicTime(new Date())}</time>
         <span class="system-glyph"></span>
       </header>
@@ -2096,6 +2288,7 @@ function renderMacShell(content, preservedMediaIds = new Set()) {
         ${state.linkMakerWindowOpen ? renderLinkMakerWindow() : ""}
         ${renderDesktopPictureWindows()}
         ${renderDesktopVideoWindows(preservedMediaIds)}
+        ${state.sharedNoteArchiveOpen ? renderSharedNoteArchiveWindow() : ""}
         ${state.facetimeWindowOpen ? renderMediaWindowSlot("facetime", preservedMediaIds, renderFacetimeWindow()) : ""}
         ${state.facetimeArchiveOpen ? renderMediaWindowSlot("facetime-archive", preservedMediaIds, renderFacetimeArchiveWindow()) : ""}
       </div>
@@ -2590,6 +2783,44 @@ function renderFacetimeArchiveWindow() {
   `;
 }
 
+function renderSharedNoteArchiveWindow() {
+  const archives = normalizeSharedNoteArchives(state.data.sharedNoteArchives).slice().reverse();
+  const status = state.sharedNoteArchiveStatus || (archives.length ? `${archives.length} saved` : "No shared notes archived yet.");
+
+  return `
+    <section class="shared-note-archive-window mac-window" data-window-title="Shared Note Archive" data-draggable-window="shared-note-archive" style="${getWindowStyle("shared-note-archive")}" role="dialog" aria-labelledby="shared-note-archive-title">
+      <button class="window-close" type="button" data-close-shared-note-archive aria-label="Close shared note archive" title="Close">×</button>
+      <div class="shared-note-archive-head">
+        <div>
+          <p class="eyebrow">Special</p>
+          <h2 id="shared-note-archive-title">Shared Note Archive</h2>
+          <p data-shared-note-archive-status>${escapeHtml(status)}</p>
+        </div>
+        <button class="archive-note-button" type="button" data-archive-shared-note>Archive Current Note</button>
+      </div>
+      <div class="shared-note-archive-list">
+        ${
+          archives.length
+            ? archives
+                .map(
+                  (archive) => `
+                    <article class="shared-note-archive-item">
+                      <img src="${escapeAttribute(archive.image)}" alt="Shared note screenshot from ${escapeAttribute(archive.createdAt ? formatMessageTime(archive.createdAt) : "the archive")}" />
+                      <div>
+                        <strong>${archive.dateKey ? escapeHtml(formatDate(archive.dateKey, "short")) : "Shared note"}</strong>
+                        <span>${archive.createdAt ? escapeHtml(formatMessageTime(archive.createdAt)) : "Saved note"}${archive.createdBy ? ` - ${escapeHtml(archive.createdBy)}` : ""}</span>
+                      </div>
+                    </article>
+                  `,
+                )
+                .join("")
+            : `<div class="shared-note-archive-empty">No screenshots yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderSeedWindow(owner) {
   const isClaudia = owner === "claudia";
   const title = isClaudia ? "Claudia's Seed Collection" : "Genevieve's Seed Collection";
@@ -2762,6 +2993,7 @@ function bindEvents() {
   bindMonkeyVideoEvents();
   bindFacetimeEvents();
   bindFacetimeArchiveEvents();
+  bindSpecialMenuEvents();
 
   document.querySelector("[data-wallpaper-mode]")?.addEventListener("click", () => {
     toggleWallpaperMode();
@@ -4018,6 +4250,53 @@ function bindDesktopBackgroundEvents() {
     const file = event.dataTransfer?.files?.[0];
     if (file) setDesktopBackgroundFromFile(file);
   });
+}
+
+function bindSpecialMenuEvents() {
+  const specialMenu = document.querySelector("[data-special-menu]");
+  if (specialMenu && specialMenu.dataset.specialMenuBound !== "true") {
+    specialMenu.dataset.specialMenuBound = "true";
+    specialMenu.addEventListener("click", () => {
+      state.specialMenuOpen = !state.specialMenuOpen;
+      render();
+    });
+  }
+
+  document.querySelectorAll("[data-open-shared-note-archive]").forEach((button) => {
+    if (button.dataset.sharedArchiveOpenBound === "true") return;
+    button.dataset.sharedArchiveOpenBound = "true";
+
+    button.addEventListener("click", () => {
+      state.sharedNoteArchiveOpen = true;
+      state.sharedNoteArchiveStatus = "";
+      state.specialMenuOpen = false;
+      document.querySelector("[data-special-menu-card]")?.remove();
+      document.querySelector("[data-special-menu]")?.setAttribute("aria-expanded", "false");
+      mountSharedNoteArchiveWindow();
+    });
+  });
+
+  document.querySelectorAll("[data-archive-shared-note]").forEach((button) => {
+    if (button.dataset.sharedArchiveCreateBound === "true") return;
+    button.dataset.sharedArchiveCreateBound = "true";
+
+    button.addEventListener("click", () => {
+      archiveSharedNoteScreenshot();
+    });
+  });
+
+  const closeButton = document.querySelector("[data-close-shared-note-archive]");
+  if (closeButton && closeButton.dataset.sharedArchiveCloseBound !== "true") {
+    closeButton.dataset.sharedArchiveCloseBound = "true";
+    closeButton.addEventListener("click", () => {
+      state.sharedNoteArchiveOpen = false;
+      removeDesktopWindow('[data-draggable-window="shared-note-archive"]');
+    });
+  }
+}
+
+function mountSharedNoteArchiveWindow() {
+  mountDesktopWindow('[data-draggable-window="shared-note-archive"]', renderSharedNoteArchiveWindow(), bindSpecialMenuEvents);
 }
 
 function bindDesktopPictureEvents() {
